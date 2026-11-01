@@ -123,6 +123,24 @@ export function addPack(gid,record,s=store){
  const p={...record,reviewedWithV86:true,id:record.id||'sas-'+randomUUID().replaceAll('-','').slice(0,14)};g.packs.push(p);
  return p;
 }
+// Pending records are previews/checks, not evidence of a published image.
+// Room history always wins, including messages recovered after a restart.
+export function pendingMoviePacks(g){
+ const used=new Set(Object.values(g.rooms||{}).flatMap(room=>[
+  ...(Array.isArray(room.usedIds)?room.usedIds:[]),room.lastId
+ ]).filter(Boolean));
+ return (g.packs||[]).filter(p=>p.category==='movies'&&p.deliveryState==='pending'&&
+  isWebsiteRecord(p)&&!used.has(p.id));
+}
+export function saveFetchedMovie(gid,record,s=store){
+ if(record.category!=='movies')throw Error('هذا السجل ليس لفيلم');
+ const g=guild(gid,s),previous=g.packs,pendingIds=new Set(pendingMoviePacks(g).map(p=>p.id));
+ // Replace unposted checks only after the provider supplied new, validated bytes.
+ // Published records remain intact for duplicate history and old download buttons.
+ g.packs=previous.filter(p=>!pendingIds.has(p.id));
+ try{return addPack(gid,{...record,deliveryState:'pending',fetchedAt:Date.now()},s);}
+ catch(error){g.packs=previous;throw error;}
+}
 export function sha(buffer){return createHash('sha256').update(buffer).digest('hex');}
 export function migrateLegacySettings(legacyPath=STORE_FILE,s=store){
  // Convert saved configs to five categories, even if an older upgrade had run.
@@ -138,6 +156,22 @@ export function migrateLegacySettings(legacyPath=STORE_FILE,s=store){
     Array.isArray(p.sourceIds)&&p.sourceIds.length===2&&p.sourceIds.every(id=>/^fanart:art:\d+$/.test(id))){
     p.sourceId=[p.sourceId,...p.sourceIds].join('|');changed=true;
    }
+  }
+  if(g.migrations?.movieDelivery!=='pending-v1'){
+   const used=new Set(Object.values(g.rooms).flatMap(room=>[
+    ...(Array.isArray(room?.usedIds)?room.usedIds:[]),room?.lastId
+   ]).filter(Boolean));
+   const lastFetched=g.fetchStatus?.movies?.recordId;
+   for(const p of g.packs){
+    if(p?.category!=='movies'||p.provider!=='Fanart.tv'||p.importedAutomatically!==true)continue;
+    if(used.has(p.id))p.deliveryState='published';
+    else if(!p.deliveryState)p.deliveryState=p.id===lastFetched?'pending':'published';
+   }
+   g.fetchAt.movies=0;if(g.fetchStatus)delete g.fetchStatus.movies;
+   for(const room of Object.values(g.rooms))if(room?.category==='movies'){
+    room.error=null;room.nextAt=Date.now()+5000;
+   }
+   g.migrations??={};g.migrations.movieDelivery='pending-v1';changed=true;
   }
   if(g.migrations?.photoProvider!=='unsplash-v1'){
    for(const category of ['girls','boys']){

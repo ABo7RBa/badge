@@ -1,4 +1,4 @@
-# V16.11 image sources
+# V16.12 image sources
 
 | Category | Provider | Integration |
 | --- | --- | --- |
@@ -24,4 +24,10 @@ No active fetch routes remain for Pexels, Pixabay, Openverse, Wikimedia Commons 
 
 Direct Unsplash documentation access returned403 in this environment; integration requirements were reviewed from the official GitHub SDK. Live signup/key issuance and authenticated service access were not verified.
 
-Every publication imports a new provider pair for each due post and never falls back to saved/bundled image packs. The legacy SOURCE_ONLY and ENABLE_SOURCE_CHANNELS flags no longer enable any library or upload path. Preview requests also fetch fresh results. Saved provider records/files support download buttons and duplicate history only. No live network or Discord-send guarantee is implied. Wallhaven full-image retrieval also requires w.wallhaven.cc. Attribution does not replace rights holders’ permissions.
+Every publication fetches provider images online for each due post and never falls back to saved/bundled image packs. The legacy SOURCE_ONLY and ENABLE_SOURCE_CHANNELS flags no longer enable any library or upload path. Preview requests also fetch fresh results. Saved provider records/files support download buttons and duplicate history only. No live network or Discord-send guarantee is implied. Wallhaven full-image retrieval also requires w.wallhaven.cc. Attribution does not replace rights holders’ permissions.
+
+Fanart V16.12: api_key query authentication supplements the api-key header for interoperability. Query-bearing URLs and raw transport details are never logged by the source adapter. Movies use explicit pending/published states: manual fetches/previews and failed Discord sends do not consume artwork. A pending pair must be downloaded and validated from Fanart again before publishing; it is never sent offline from stored files. Published assets remain in duplicate history. Per-guild locking serializes movie publication and manual imports. Legacy records with known publication history remain published; only a known latest unused fetch is recovered as pending.
+
+Movie searches scan up to10catalogue records and24image downloads per attempt, with3concurrent image downloads and bounded artwork windows. Later catalogue records and artwork remain reachable through rotating search progress. Unsuitable results and an incomplete search are distinguished. Avatar minimum320matches local normalization. These are local mocked-service regressions, not live service validation.
+
+Visual duplicate checks against published records run during Fanart pair selection, allowing alternative artwork with different content to be tried when the service assigns new IDs to duplicate images. Artwork grid progress also keeps a successful tile reachable while its pair is pending online revalidation.
