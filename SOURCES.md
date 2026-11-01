@@ -1,4 +1,4 @@
-# V16.4 image sources
+# V16.9 image sources
 
 | Category | Provider | Integration |
 | --- | --- | --- |
@@ -18,10 +18,10 @@ Unsplash uses returned images.unsplash.com URLs directly and retains query param
 
 Search metadata is cached for one hour. A conservative shared45actual APIrequests/hour/key guard counts searches and tracking and observes provider rate-limit responses. Keys are not stored in cache JSON or exposed in errors. Boys style is selected through source descriptions/tags, monochrome search filters and average-color metadata, not local pixel processing or an AI pose classifier.
 
-The bundled artwork and owner uploads retain their separate sources. The local composite renderer remains available for them and Fanart.tv. Film images remain subject to owners' rights, without claims of Netflix availability. 4K Wallpapers remains a collection-page link feature.
+No bundled image library or owner-upload feature remains. The local composite renderer is used for newly fetched Wallhaven anime and Fanart.tv pairs. Film images remain subject to owners' rights, without claims of Netflix availability. 4K Wallpapers remains a collection-page link feature.
 
-No active fetch routes remain for Pexels, Pixabay, Openverse, Wikimedia Commons or TMDB. Eligible previously stored Pexels/Pixabay pairs are retained; older removed/unverified content stays quarantined according to the existing policy.
+No active fetch routes remain for Pexels, Pixabay, Openverse, Wikimedia Commons or TMDB. Previously saved image files remain untouched for backup, but are never selected for publication or preview.
 
 Direct Unsplash documentation access returned403 in this environment; integration requirements were reviewed from the official GitHub SDK. Live signup/key issuance and authenticated service access were not verified.
 
-Default SOURCE_ONLY=true imports a new provider pair for each due post and never falls back to saved/bundled image packs. No live network or Discord-send guarantee is implied. Wallhaven full-image retrieval also requires w.wallhaven.cc. Attribution does not replace rights holders’ permissions.
+Every publication imports a new provider pair for each due post and never falls back to saved/bundled image packs. The legacy SOURCE_ONLY and ENABLE_SOURCE_CHANNELS flags no longer enable any library or upload path. Preview requests also fetch fresh results. Saved provider records/files support download buttons and duplicate history only. No live network or Discord-send guarantee is implied. Wallhaven full-image retrieval also requires w.wallhaven.cc. Attribution does not replace rights holders’ permissions.

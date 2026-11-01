@@ -15,7 +15,6 @@ try {
  await fs.cp(path.join(root,'src'),path.join(tmp,'src'),{recursive:true});
  await fs.writeFile(path.join(tmp,'package.json'),'{"type":"module"}');
  await fs.symlink(path.join(root,'node_modules'),path.join(tmp,'node_modules'),'dir');
- await fs.symlink(path.join(root,'assets'),path.join(tmp,'assets'),'dir');
  // Independently seeded tiles give each pair distinct fingerprints and similar
  // low-light palettes, so the real quality and deduplication checks still run.
  for(let variant=0;variant<8;variant++)for(const kind of ['avatar','banner']){
@@ -61,10 +60,13 @@ globalThis.fetch=async(raw,opts)=>{
   movieposter:[{id:'51',url:'https://assets.fanart.tv/fanart/movies/27205/poster.png'}],
   moviebackground:[{id:'52',url:'https://assets.fanart.tv/fanart/movies/27205/background.png'}]});
  if(u.hostname==='assets.fanart.tv')return new Response(fixtures[(u.pathname.endsWith('poster.png')?'avatar':'banner')+'-3'],{headers:{'content-type':'image/png'}});
+ if(u.hostname==='w.wallhaven.cc')return new Response(fixtures[(u.pathname.includes('a1b2c3')?'avatar':'banner')+'-1'],{headers:{'content-type':'image/png'}});
  if(u.hostname==='wallhaven.cc'){
-  const id=u.searchParams.get('categories')==='010'?'a1b2c3':'d4e5f6';
+  const anime=u.searchParams.get('categories')==='010',avatar=anime&&u.searchParams.get('atleast')==='600x600';
+  const id=avatar?'a1b2c3':'d4e5f6';
   return Response.json({data:[{id,url:'https://wallhaven.cc/w/'+id,
-   category:id==='a1b2c3'?'anime':'general',purity:'sfw',dimension_x:2560,dimension_y:1440,
+   category:anime?'anime':'general',purity:'sfw',dimension_x:avatar?800:2560,dimension_y:avatar?1000:1440,
+   path:'https://w.wallhaven.cc/full/'+id.slice(0,2)+'/wallhaven-'+id+'.jpg',
    thumbs:{large:'https://th.wallhaven.cc/lg/'+id.slice(0,2)+'/'+id+'.jpg'}}]});
  }
  throw Error('Unexpected live network destination: '+u.hostname);
@@ -108,7 +110,7 @@ assert.equal(order.slice(0,7).every(x=>x.startsWith('history:')),true,'history m
 const initial=captured.find(x=>x.kind==='timeout'&&x.ms===5000)?.callback;
 const tick=captured.find(x=>x.kind==='interval'&&x.ms===20000)?.callback;
 const prefetch=captured.find(x=>x.kind==='interval'&&x.ms===300000)?.callback;
-assert(initial&&tick&&prefetch,'all automatic timer callbacks must register');
+assert(initial&&tick&&!prefetch,'only publication timers register; no library prefetch');
 
 // No manual importImages/post calls: invoke only callbacks registered by startup.
 await initial();
@@ -116,11 +118,11 @@ for(const [category,item] of Object.entries(active)){
  const sent=messages.filter(x=>x.cid===item.cid);assert.equal(sent.length,1,category+': '+item.room.error);
  assert.equal(item.room.count,1);assert(item.room.nextAt>now);
  const embed=sent[0].payload.embeds[0].toJSON();
- if(['anime','pc_wallpapers'].includes(category)){
+ if(category==='pc_wallpapers'){
   assert(embed.url.startsWith('https://wallhaven.cc/w/'));assert(embed.image.url.includes('th.wallhaven.cc'));
   assert.equal(item.room.wallhavenUsedIds.length,1);
- }else if(category==='movies'){
-  assert(sent[0].payload.files[0].attachment.length>1000);assert(embed.description.includes('Fanart.tv'));
+ }else if(category==='movies'||category==='anime'){
+  assert(sent[0].payload.files[0].attachment.length>1000);assert(embed.description.includes(category==='movies'?'Fanart.tv':'مصدر البنر'));
   assert.equal(item.g.fetchStatus[category].state,'success');
  }else{
   assert(!sent[0].payload.files,'Unsplash pairs must remain hotlinked');
@@ -183,22 +185,9 @@ assert.equal(attempts.get(overlap.cid),1);release();await first;
 assert.equal(messages.filter(x=>x.cid===overlap.cid).length,1);assert.equal(overlap.room.count,1);
 overlap.room.enabled=false;
 
-// Prefetch prepares stored pairs, never discards Wallhaven links in the background.
-const onlyPrefetch=addRoom('prefetch-only','boys',{future:true});generation=4;
-addRoom('prefetch-anime','anime',{future:true});
-addRoom('prefetch-pc','pc_wallpapers',{future:true});
-future.room.enabled=false;
-const wallhavenBefore=apiCalls.filter(x=>x.hostname==='wallhaven.cc').length;
-const trackingBeforePrefetch=apiCalls.filter(x=>x.pathname.endsWith('/download')).length;
-await prefetch();await prefetch();await prefetch();
-assert.equal(onlyPrefetch.g.packs.length,1,'prefetch must actually prepare a pair');
-assert.equal(messages.some(x=>x.cid===onlyPrefetch.cid),false,'prefetch alone must not publish');
-assert.equal(apiCalls.filter(x=>x.hostname==='wallhaven.cc').length,wallhavenBefore);
-assert.equal(apiCalls.filter(x=>x.pathname.endsWith('/download')).length,trackingBeforePrefetch,'prefetched candidates are not selected yet');
-
 const lastMessageCount=messages.length,lastCallCount=apiCalls.length;
 automation.stop();assert.equal(cleared.length,captured.length);
-await initial();await tick();await prefetch();
+await initial();await tick();
 assert.equal(messages.length,lastMessageCount);assert.equal(apiCalls.length,lastCallCount);
 Date.now=originalNow;
 console.log('PASS: automatic startup/timers fetch and publish five categories, respect schedule/pause, retry missing keys, preserve failed sends, prevent overlap, and prepare only stored-pair sources');

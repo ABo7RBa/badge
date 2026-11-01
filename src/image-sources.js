@@ -8,7 +8,7 @@ export const SOURCE_CREDITS = '**مصادر ABO 7RB**\n' +
   '🌸 بنات + 🖤 شباب: Unsplash — صور فوتوغرافية مع اسم المصور ورابطه.\n' +
   '🎬 أفلام: Fanart.tv — ملصق وخلفية من الفيلم نفسه، وليست قائمة Netflix.\n' +
   'https://wallhaven.cc • https://unsplash.com • https://fanart.tv\n' +
-  'تبقى حقوق الصور لأصحابها. يمكن إضافة أطقم أفتار وبنر مراجعة يدويًا لكل قسم.';
+  'تبقى حقوق الصور لأصحابها. تُجلب الأطقم من المواقع فقط.';
 
 export async function fetchCategoryAssets(category, seen = new Set(), options = {}) {
   if (category === 'girls' || category === 'boys') return fetchUnsplashPair(category, seen, options);

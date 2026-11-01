@@ -10,7 +10,6 @@ try{
  await fs.cp(path.join(root,'src'),path.join(tmp,'src'),{recursive:true});
  await fs.writeFile(path.join(tmp,'package.json'),'{"type":"module"}');
  await fs.symlink(path.join(root,'node_modules'),path.join(tmp,'node_modules'),'dir');
- await fs.symlink(path.join(root,'assets'),path.join(tmp,'assets'),'dir');
  const result=execFileSync(process.execPath,['--input-type=module','-'],{cwd:tmp,encoding:'utf8',input:`
 import assert from 'node:assert/strict';
 import {post} from './src/bot.js';
@@ -48,9 +47,9 @@ for(const stage of ['search','download'])for(const action of ['pause','unbind','
  if(current){assert.equal(current.nextAt,nextAt);assert.equal(current.count,0);}
 }
 // Wallhaven uses its own awaited search path, which must respect a paused room too.
-const gid='cancel-wallhaven',g=guild(gid),room=g.rooms.room=makeRoom('anime');
+const gid='cancel-wallhaven',g=guild(gid),room=g.rooms.room=makeRoom('pc_wallpapers');
 let reached,release;const ready=new Promise(r=>{reached=r;}),gate=new Promise(r=>{release=r;});
-globalThis.fetch=async()=>{reached();await gate;return Response.json({data:[{id:'a1b2c3',url:'https://wallhaven.cc/w/a1b2c3',category:'anime',purity:'sfw',dimension_x:2560,dimension_y:1440,thumbs:{large:'https://th.wallhaven.cc/lg/a1/a1b2c3.jpg'}}]});};
+globalThis.fetch=async()=>{reached();await gate;return Response.json({data:[{id:'a1b2c3',url:'https://wallhaven.cc/w/a1b2c3',category:'general',purity:'sfw',dimension_x:2560,dimension_y:1440,thumbs:{large:'https://th.wallhaven.cc/lg/a1/a1b2c3.jpg'}}]});};
 const messages=[];const client={user:{id:'bot'},channels:{fetch:async()=>({guildId:gid,isTextBased:()=>true,permissionsFor:()=>({has:()=>true}),send:async p=>messages.push(p)})}};
 const pending=post(client,gid,'room');await ready;room.enabled=false;room.revision++;release();
 assert.match(await pending,/أُلغي/);assert.equal(messages.length,0);assert.equal(room.count,0);

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import {randomInt,randomUUID,createHash} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {isPublishableRecord} from './content-policy.js';
 import {isCurrentBoysStyle,BOYS_STYLE_VERSION} from './boys-style.js';
@@ -11,7 +11,6 @@ export const DEFAULT_CATEGORIES=Object.freeze({
  anime:'🎌 أنمي',movies:'🎬 أفلام',girls:'🌸 بنات',boys:'🖤 شباب',pc_wallpapers:'🖥️ خلفيات PC'
 });
 export const ALLOWED_CATEGORIES=new Set(Object.keys(DEFAULT_CATEGORIES));
-const seed=JSON.parse(fs.readFileSync(path.join(ROOT,'assets/seed.json'),'utf8')).filter(p=>ALLOWED_CATEGORIES.has(p.category));
 export function loadStore(file=STORE_FILE){
  try {const s=JSON.parse(fs.readFileSync(file,'utf8'));
   if(!s||!s.guilds||typeof s.guilds!=='object'||Array.isArray(s.guilds))throw Error('ملف غير صحيح');
@@ -73,16 +72,24 @@ export function isRemovedSource(p){
  return values.some(x=>/^(?:openverse:|tmdb:|openverse-|tmdb-|commons-|File:)/i.test(String(x||'')) ||
   /(?:^|[./])(?:wikimedia\.org|themoviedb\.org|tmdb\.org|openverse\.org)(?:[/:]|$)/i.test(String(x||'')));
 }
+// Stored website records support download buttons and duplicate history only.
+// They are never a publication queue or a fallback when a website is unavailable.
+export function isWebsiteRecord(p){
+ const provider={girls:'Unsplash',boys:'Unsplash',movies:'Fanart.tv',anime:'Wallhaven'}[p?.category];
+ return Boolean(provider&&p.importedAutomatically===true&&p.categoryVerified===true&&p.provider===provider&&
+  (provider==='Unsplash'?isUnsplashRecord(p):!p.remote&&Array.isArray(p.sourceIds)&&p.sourceIds.length===2&&
+   p.sourceIds.every(id=>String(id).startsWith(provider==='Fanart.tv'?'fanart:art:':'wallhaven:'))));
+}
 export function packs(gid,cat=null,s=store){
- const g=guild(gid,s);const combined=[...seed,...g.packs];const seen=new Set(),out=[];
+ const g=guild(gid,s);const combined=g.packs;const seen=new Set(),out=[];
  for(const p of combined){
-  if(!g.categories[p.category]||p.kind!==kindFor(p.category)||!isPublishableRecord(p))continue;
+  if(!isWebsiteRecord(p)||!g.categories[p.category]||p.kind!==kindFor(p.category)||!isPublishableRecord(p))continue;
   // Images imported automatically by older versions were misclassified; fail closed.
-  if(!p.bundled && p.importedAutomatically && p.categoryVerified!==true)continue;
+  if(p.categoryVerified!==true)continue;
   // Removed providers remain on disk for backups, but cannot be republished.
   if(isRemovedSource(p))continue;
   // Keep old files for backups, but use the requested dark streetwear style for boys.
-  // Owner-reviewed uploads remain eligible; only old bundled/automatic styles are excluded.
+  // Old styles stay in history only.
   if(!isCurrentBoysStyle(p))continue;
   if(p.remote){if(!isUnsplashRecord(p))continue;}
   else if(!p.avatar || !p.banner || !fs.existsSync(mediaPath(p.avatar))||!fs.existsSync(mediaPath(p.banner)))continue;
@@ -98,20 +105,6 @@ export function makeRoom(category,minutes=40,now=Date.now()){
  if(!Number.isInteger(minutes)||minutes<5||minutes>1440)throw Error('مدة النشر من 5 إلى 1440 دقيقة');
  return {category,minutes,enabled:true,revision:0,nextAt:now,lastPostAt:0,lastId:null,queue:[],usedIds:[],error:null,count:0};
 }
-export function choose(gid,room,s=store){
- if(!Array.isArray(room.usedIds))room.usedIds=room.lastId?[room.lastId]:[];
- const used=new Set(room.usedIds);
- const candidates=packs(gid,room.category,s).filter(p=>!used.has(p.id));
- const index=new Map(candidates.map(p=>[p.id,p]));
- room.queue=(room.queue||[]).filter((id,i,list)=>index.has(id)&&list.indexOf(id)===i);
- if(!candidates.length)return null;
- if(!room.queue.length){
-  room.queue=[...index.keys()];
-  for(let j=room.queue.length-1;j>0;j--){const k=randomInt(j+1);[room.queue[j],room.queue[k]]=[room.queue[k],room.queue[j]];}
-  if(room.queue.length>1&&room.queue[0]===room.lastId)[room.queue[0],room.queue[1]]=[room.queue[1],room.queue[0]];
- }
- return index.get(room.queue[0]);
-}
 export function sent(room,id,now=Date.now()){
  room.queue=(room.queue||[]).filter(k=>k!==id);
  room.usedIds??=[];if(!room.usedIds.includes(id))room.usedIds.push(id);room.lastId=id;room.count=(room.count||0)+1;room.lastPostAt=now;
@@ -120,8 +113,9 @@ export function sent(room,id,now=Date.now()){
 export function addPack(gid,record,s=store){
  const g=guild(gid,s);if(!g.categories[record.category])throw Error('التصنيف غير موجود');
  if(isRemovedSource(record))throw Error('هذا المصدر محذوف؛ استخدم أحد المصادر الحالية');
+ if(!isWebsiteRecord(record))throw Error('يجب جلب الصور مباشرة من المواقع المعتمدة');
  if(!isPublishableRecord({...record,reviewedWithV86:true}))throw Error('الصورة غير مؤكدة التصنيف؛ يجب أن تكون صورة فوتوغرافية موثقة، وليس أنمي أو رسمًا.');
- if(!isCurrentBoysStyle(record))throw Error('قسم الشباب يحتاج طقمًا من الستايل الجديد أو صورًا راجعها المشرف');
+ if(!isCurrentBoysStyle(record))throw Error('قسم الشباب يحتاج طقمًا من الستايل الجديد');
  if(record.kind!==kindFor(record.category))throw Error('خطأ: نوع الصورة لا يطابق التصنيف');
  if(record.remote){if(!isUnsplashRecord(record))throw Error('بيانات صور Unsplash غير صالحة');}
  else if(!/^[0-9a-f]{64}$/i.test(record.visualHash||'')||!record.bannerVisualHash||!record.avatarDHash||!record.bannerDHash)throw Error('بصمة الأفتار أو البنر ناقصة');
@@ -129,7 +123,6 @@ export function addPack(gid,record,s=store){
  const p={...record,reviewedWithV86:true,id:record.id||'sas-'+randomUUID().replaceAll('-','').slice(0,14)};g.packs.push(p);
  return p;
 }
-export function removePack(gid,id,s=store){const g=guild(gid,s);const i=g.packs.findIndex(p=>p.id===id);if(i<0)return null;return g.packs.splice(i,1)[0];}
 export function sha(buffer){return createHash('sha256').update(buffer).digest('hex');}
 export function migrateLegacySettings(legacyPath=STORE_FILE,s=store){
  // Convert saved configs to five categories, even if an older upgrade had run.

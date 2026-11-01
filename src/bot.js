@@ -1,18 +1,14 @@
 import {Client,GatewayIntentBits,Events,REST,Routes,PermissionFlagsBits,AttachmentBuilder,EmbedBuilder,ActionRowBuilder,ButtonBuilder,ButtonStyle,StringSelectMenuBuilder,ChannelSelectMenuBuilder,ChannelType,ModalBuilder,TextInputBuilder,TextInputStyle,MessageFlags} from 'discord.js';
 import {cmds,ACTIONS} from './commands.js';
-import {guild,store,save,pack,packs,makeRoom,choose,sent,addPack,removePack,kindFor,migrateLegacySettings} from './db.js';
-import {renderCard,downloadAttachment,normalizeFromUpload,deleteCustom} from './media.js';
+import {guild,store,save,pack,packs,makeRoom,sent,addPack,migrateLegacySettings} from './db.js';
+import {renderCard,normalizeFromUpload,deleteCustom} from './media.js';
 import {searchWallhaven} from './wallhaven-source.js';
 import {fetchCategoryAssets,SOURCE_CREDITS} from './image-sources.js';
 import {trackUnsplashPair} from './unsplash-source.js';
 import {isUnsplashRecord} from './unsplash-record.js';
 import {collectRecentPostIds,reconcileRoom} from './history.js';
-import {upgradeLibraryFingerprints} from './library-maintenance.js';
-import {getOwnDiscordPair} from './member-source.js';
 import {pcCollectionsMessage,validatePcWallpaperRoom} from './wallpaper-links.js';
 import {randomUUID} from 'node:crypto';
-import fs from 'node:fs/promises';
-const sourcesOnly=()=>process.env.SOURCE_ONLY!=='false';
 const EVERY=60_000;const busy=new Set();const processingFetch=new Map();
 const sourceQueue=new Map();
 async function withSourceLock(key,operation){
@@ -53,14 +49,11 @@ function roomText(gid){
 }
 function stateText(gid){
  const g=guild(gid);
- const left=Object.values(g.rooms).map(r=>{
-  const used=new Set(r.usedIds||[]);return `${r.category}: ${packs(gid,r.category).filter(p=>!used.has(p.id)).length} غير منشورة${r.error?' • ⚠️ '+r.error:''}`;
- }).join('\n');
  const keys=`Unsplash: ${process.env.UNSPLASH_ACCESS_KEY?'مفتاح موجود':'⚠️ يحتاج UNSPLASH_ACCESS_KEY'} • Fanart.tv: ${process.env.FANART_API_KEY?'مفتاح موجود':'⚠️ يحتاج FANART_API_KEY'}`;
  const sources=Object.entries(g.fetchStatus||{}).map(([category,status])=>
   `${category}: ${status.state==='error'?'⚠️ '+status.error:status.state==='empty'?'لا توجد نتائج جديدة':'نجح آخر جلب'}`).join('\n');
  const wallhaven=process.env.WALLHAVEN_ENABLED==='false'?'Wallhaven: معطل':'Wallhaven: معاينات الأنمي وخلفيات PC';
- return `**الحالة**\nوضع النشر: ${sourcesOnly()?'من المواقع فقط':'المكتبة والمواقع'}\nالرومات: ${Object.keys(g.rooms).length}\nالأطقم المتاحة: ${packs(gid).length}\nالنشر الافتراضي: 40 دقيقة\n${left}\n${keys}\n${wallhaven}\n${sources}\n${roomText(gid)}`.slice(0,1950);
+ return `**الحالة**\nوضع النشر: من المواقع فقط\nالرومات: ${Object.keys(g.rooms).length}\nسجل أطقم المواقع: ${packs(gid).length}\nالنشر الافتراضي: 40 دقيقة\n${keys}\n${wallhaven}\n${sources}\n${roomText(gid)}`.slice(0,1950);
 }
 async function recoverPreviousPosts(client){
  let modified=false;
@@ -74,7 +67,7 @@ async function recoverPreviousPosts(client){
  }
  if(modified)save();
 }
-function categoryText(gid){return Object.entries(guild(gid).categories).map(([key,title])=>`• ${title} — ${packs(gid,key).length} صورة`).join('\n').slice(0,1750);}
+function categoryText(gid){return Object.entries(guild(gid).categories).map(([key,title])=>`• ${title} — ${key==='movies'?'Fanart.tv':['girls','boys'].includes(key)?'Unsplash':'Wallhaven'}`).join('\n');}
 export function unsplashEmbeds(record){
  if(!isUnsplashRecord(record))throw Error('بيانات صور Unsplash غير صالحة');
  const name=value=>String(value).replace(/[\[\]()*_`<>]/g,'').slice(0,90);
@@ -100,9 +93,8 @@ export async function post(client,gid,cid,{forced=false}={}){
   if(!channel||channel.guildId!==gid||!channel.isTextBased()||!channel.send)throw Error('الروم غير متاح');
   if(!channel.permissionsFor(client.user)?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.EmbedLinks]))throw Error('صلاحيات View Channel وSend Messages وEmbed Links مطلوبة');
   let sourceFailure=null;
-  // Wallhaven serves source links + preview, not rehosted/edited files.
-  // Never turn unlicensed Wallhaven submissions into stored avatar/banner pairs.
-  if((r.category==='pc_wallpapers'||r.category==='anime'&&!sourcesOnly())&&process.env.WALLHAVEN_ENABLED!=='false') {
+  // PC wallpapers use the source preview and original page link.
+  if(r.category==='pc_wallpapers'&&process.env.WALLHAVEN_ENABLED!=='false') {
    try{
     const result=await withSourceLock(gid,async()=>{
     if(!stillCurrent())return cancelled;
@@ -129,8 +121,7 @@ export async function post(client,gid,cid,{forced=false}={}){
   }
   let picked=null;
   const pairCategory=['girls','boys','movies','anime'].includes(r.category);
-  if(sourcesOnly()){
-   if(pairCategory&&process.env.AUTO_FETCH!=='false'){
+  if(pairCategory&&process.env.AUTO_FETCH!=='false'){
     const before=new Set(guild(gid).packs.map(p=>p.id));
     await importImages(gid,r.category,false,{demand:true});
     const status=guild(gid).fetchStatus?.[r.category];
@@ -141,18 +132,12 @@ export async function post(client,gid,cid,{forced=false}={}){
     }
    }else if(pairCategory)sourceFailure='الجلب معطل؛ فعّل AUTO_FETCH=true للنشر من المواقع';
    else if(process.env.WALLHAVEN_ENABLED==='false')sourceFailure='مصدر Wallhaven معطل؛ فعّل WALLHAVEN_ENABLED=true';
-  }else{
-   picked=choose(gid,r);
-   if(!picked&&pairCategory&&process.env.AUTO_FETCH!=='false'){
-    await importImages(gid,r.category,false,{demand:true});picked=choose(gid,r);
-   }
-  }
   if(!stillCurrent())return cancelled;
   if(!picked){
    const status=guild(gid).fetchStatus?.[r.category];
    const reason=sourceFailure||(status?.state==='error'?status.error:null);
    r.nextAt=Date.now()+(reason?5:Math.max(10,r.minutes))*EVERY;
-   r.error=reason||(sourcesOnly()?'لم يعثر المصدر على صور جديدة مناسبة لقسم ':'نفدت الصور غير المكررة لقسم ')+r.category;save();
+   r.error=reason||'لم يعثر المصدر على صور جديدة مناسبة لقسم '+r.category;save();
    return reason?'تعذر جلب صور جديدة: '+reason:'لا توجد صور جديدة؛ توقفت دورة التكرار حتى تتوفر صور أخرى';
   }
   if(picked.remote){
@@ -162,8 +147,7 @@ export async function post(client,gid,cid,{forced=false}={}){
    sent(r,picked.id);save();return `تم النشر في <#${cid}>`;
   }
   if(!channel.permissionsFor(client.user)?.has(PermissionFlagsBits.AttachFiles))throw Error('صلاحية Attach Files مطلوبة لنشر الأطقم');
-  // Only pre-approved avatar/banner pairs from one manifest record.
-  // This replaces the previous unsafe random banner mixing.
+  // Render only the two images returned together by the website adapter.
   const output=await renderCard(picked);
   if(!stillCurrent())return cancelled;
   const credit=new EmbedBuilder()
@@ -185,7 +169,7 @@ async function postPcCollectionLinks(client,gid,cid){
  if(!channel.permissionsFor(client.user)?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages]))throw Error('البوت يحتاج عرض الروم وإرسال الرسائل');
  // Authorized action: link to HTML pages only. Do not scrape or hotlink copyrighted images.
  await channel.send(ui(pcCollectionsMessage()));
- return `✅ أُرسلت روابط المجموعات إلى <#${cid}>. صور الموقع ليست مضافة إلى مكتبة البوت.`;
+ return `✅ أُرسلت روابط المجموعات إلى <#${cid}>. هذه روابط مجموعات الموقع.`;
 }
 async function scheduler(client){
  for(const [gid,g] of Object.entries(store.guilds))for(const [cid,r] of Object.entries(g.rooms||{})){
@@ -218,7 +202,7 @@ async function doImportImages(gid,category,force=false,{demand=false}={}){
   for(const id of seenLinks)last.add(id);
   const external=await fetchCategoryAssets(category,last,{seed:Math.floor(Date.now()/(80*EVERY))%99});
   if(!external){fetched('empty');return 'لا توجد صورة جديدة مناسبة لهذا القسم؛ لن أكرر الصور أو آخذها من قسم آخر.';}
-  if(external.linkOnly){fetched('success');return `🔎 ${category}: ${external.sourceUrl}\nمعاينة Wallhaven تُنشر تلقائيًا في الروم المرتبط بهذا القسم. الأطقم المحلية متاحة بالرفع اليدوي.`;}
+  if(external.linkOnly){fetched('success');return `🔎 ${category}: ${external.sourceUrl}\nمعاينة Wallhaven تُنشر تلقائيًا في الروم المرتبط بهذا القسم. تُجلب الخلفيات مباشرة من الموقع.`;}
   const id='sas-'+randomUUID().replaceAll('-','').slice(0,14);
   if(external.remote){
    const record=addPack(gid,{...external,id,category,kind:'profile',importedAutomatically:true,categoryVerified:true});
@@ -231,45 +215,6 @@ async function doImportImages(gid,category,force=false,{demand=false}={}){
    return `✅ أضفت صورة جديدة لقسم ${category} من ${external.provider}. (${record.id})`;
   }catch(e){if(fileInfo)await deleteCustom(fileInfo);throw e;}
  }catch(e){fetched('error',err(e));return 'تعذر الجلب: '+err(e);}
-}
-async function addFromInteraction(i,category,avatar,banner,title,confirmPhoto=false,filmSource=null,confirmAnime=false){
- const gid=i.guildId;if(!guild(gid).categories[category])throw Error('التصنيف غير موجود');
- if(['girls','boys'].includes(category)&&confirmPhoto!==true)throw Error('لتجنب الأنمي: تأكد أنها صورة فوتوغرافية حقيقية، ثم فعّل خيار تأكيد أنها صورة واقعية.');
- if(category==='movies'&&(!filmSource||!/^https:\/\/[^\s]+$/i.test(filmSource)))throw Error('قسم الأفلام يتطلب رابط HTTPS لمصدر الفيلم الحقيقي (film_source)، وليس مجرد صورة سينمائية.');
- if(category==='anime'&&!confirmAnime)throw Error('لتأكيد أن الصورة أنمي وليست واقعية: فعّل خيار confirm_anime.');
- if(category!=='pc_wallpapers'&&!banner)throw Error('ارفع صورة أفتار وصورة بنر مختلفتين ومتناسقتين. لن يختار البوت بنرًا عشوائيًا.');
- const av=await downloadAttachment(avatar),bn=banner?await downloadAttachment(banner):null;
- const id='sas-'+randomUUID().replaceAll('-','').slice(0,14);
- let files;
- try{
-  files=await normalizeFromUpload(gid,id,category,av,bn);
-  addPack(gid,{...files,id,category,title:title||'طقم جديد',importedAutomatically:false,photoVerified:['girls','boys'].includes(category)&&confirmPhoto===true,categoryVerified:['girls','boys'].includes(category)?confirmPhoto===true:category==='movies'?Boolean(filmSource):true,verificationSource:['girls','boys'].includes(category)?'moderator-photo':'manual',filmVerified:category==='movies'&&Boolean(filmSource),sourceUrl:filmSource||null});save();
-  return `✅ تمت إضافة الصورة لقسم \`${category}\`، والمعرّف \`${id}\``;
- }catch(e){if(files)await deleteCustom(files);throw e;}
-}
-// Optional opt-in: adapted from the member avatar / banner fetching used in
-// Nekros-dsc/Pfp-Bot. Only the command caller's own profile can be imported.
-async function importOwnProfile(i,client){
- const cat=i.options.getString('category',true);
- if(!['anime','girls','boys'].includes(cat))throw Error('استيراد الحساب متاح فقط لأقسام anime/girls/boys؛ الأفلام تحتاج مصدر فيلم موثق.');
- if(i.options.getBoolean('reviewed',true)!==true)throw Error('لازم تتأكد أن صور الحساب متناسقة وتناسب القسم قبل استيرادها.');
- const profile=await getOwnDiscordPair(client,i.user.id);
- if(!profile.bannerURL)throw Error('حسابك ليس لديه بنر منفصل. استخدم /إضافة-صورة لرفع أفتار وبنر.');
- const av=await fetchDiscordMedia(profile.avatarURL),bn=await fetchDiscordMedia(profile.bannerURL);
- const id='self-'+randomUUID().slice(0,16);let files;
- try{
-  files=await normalizeFromUpload(i.guildId,id,cat,av,bn);
-  addPack(i.guildId,{...files,id,category:cat,title:'أفتار وبنر من حساب المشرف',importedAutomatically:false,photoVerified:['girls','boys'].includes(cat),categoryVerified:true,verificationSource:['girls','boys'].includes(cat)?'moderator-photo':'manual',reviewedWithV86:true,filmVerified:false,sourceUrl:null});
-  save();return `✅ تمت إضافة أفتارك وبنرك الشخصيين بعد مراجعتك للتصنيف: ${cat}.`;
- }catch(e){if(files)await deleteCustom(files);throw e;}
-}
-async function fetchDiscordMedia(url){
- const u=new URL(url);
- if(u.protocol!=='https:'||!['cdn.discordapp.com','media.discordapp.net'].includes(u.hostname))throw Error('المصدر ليس من Discord');
- const resp=await fetch(u,{signal:AbortSignal.timeout(15000),redirect:'error'});
- if(!resp.ok||!String(resp.headers.get('content-type')).startsWith('image/'))throw Error('لم أتمكن من تنزيل الصورة');
- const len=Number(resp.headers.get('content-length')||0);if(len>8_000_000)throw Error('حجم الملف كبير');
- const bytes=Buffer.from(await resp.arrayBuffer());if(bytes.length>8_000_000)throw Error('حجم الملف كبير');return bytes;
 }
 // Creates only missing channels, leaves existing channels untouched.
 // Requires a real user with Manage Server and the bot with Manage Channels.
@@ -298,31 +243,35 @@ async function setupFiveRooms(i){
  return `✅ تم تجهيز الأقسام الخمسة.\nأنشئت ${made.length} روم، واستُخدم ${reused.length} روم موجود.\n`+
  Object.entries(mapped).map(([category,id])=>`• <#${id}> — ${category}`).join('\n');
 }
+async function previewFromWebsite(gid,category){
+ if(!guild(gid).categories[category])throw Error('التصنيف غير موجود');
+ if(category==='pc_wallpapers'){
+  if(process.env.WALLHAVEN_ENABLED==='false')throw Error('Wallhaven معطل في الإعدادات');
+  const item=await searchWallhaven(category,new Set(),{seed:Math.floor(Date.now()/60000)%10000});
+  if(!item)return ui('لا توجد خلفية مناسبة من الموقع');
+  const embed=new EmbedBuilder().setTitle('🖥️ معاينة خلفية من الموقع').setURL(item.sourceUrl);
+  if(item.preview)embed.setImage(item.preview);
+  return ui('معاينة خاصة من Wallhaven',{embeds:[embed]});
+ }
+ const before=new Set(guild(gid).packs.map(p=>p.id));
+ const result=await importImages(gid,category,false,{demand:true});
+ const status=guild(gid).fetchStatus?.[category];
+ const p=status?.state==='success'&&!before.has(status.recordId)?pack(gid,status.recordId):null;
+ if(!p)return ui(result);
+ if(p.remote)return ui('معاينة خاصة من الموقع',{embeds:unsplashEmbeds(p)});
+ const out=await renderCard(p);
+ return ui('معاينة خاصة من الموقع',{files:[new AttachmentBuilder(out.buffer,{name:out.filename})]});
+}
 async function commands(i,client){
  const name=i.commandName,gid=i.guildId,channel=i.options.getChannel('channel');
- const adminNames=new Set(['تجهيز-الرومات','مصدر-صور','إيقاف-مصدر','ربط-روم','فصل-روم','تشغيل-روم','إيقاف-روم','مدة-النشر','نشر-الآن','إضافة-صورة','حذف-صورة','جلب-صور','مجموعات-4k','استيراد-حسابي']);
+ const adminNames=new Set(['تجهيز-الرومات','ربط-روم','فصل-روم','تشغيل-روم','إيقاف-روم','مدة-النشر','نشر-الآن','جلب-صور','مجموعات-4k','معاينة']);
  if(adminNames.has(name)&&!admin(i))return i.reply(ep('⛔ هذا الأمر يحتاج صلاحية إدارة السيرفر.'));
  if(name==='تجهيز-الرومات'){await i.deferReply(ep(''));return i.editReply(await setupFiveRooms(i));}
  if(name==='لوحة-التحكم'||name==='مساعدة')return i.reply(HOME());
  if(name==='التصنيفات')return i.reply(ep(categoryText(gid)));
  if(name==='الرومات')return i.reply(ep(roomText(gid)));
  if(name==='حالة')return i.reply(ep(stateText(gid)));
- if(name==='معاينة'){
-  await i.deferReply(ep(''));
-  const p=i.options.getString('id')?pack(gid,i.options.getString('id')):packs(gid,i.options.getString('category')||null)[0];
-  if(!p)return i.editReply('القسم فارغ أو المعرّف غير موجود');
-  if(p.remote)return i.editReply({content:'معاينة خاصة',embeds:unsplashEmbeds(p),files:[]});
-  const out=await renderCard(p);return i.editReply({content:'معاينة خاصة',embeds:[],attachments:[],files:[new AttachmentBuilder(out.buffer,{name:out.filename})]});
- }
- if(name==='مصدر-صور'){
-  const cat=i.options.getString('category',true);if(!guild(gid).categories[cat])throw Error('التصنيف غير موجود');
-  guild(gid).sources[channel.id]=cat;save();return i.reply(ep('✅ تم ربط مصدر الصور. فعّل ENABLE_SOURCE_CHANNELS=true في .env ثم أعد التشغيل.'));
- }
- if(name==='إيقاف-مصدر'){delete guild(gid).sources[channel.id];save();return i.reply(ep('✅ توقف استيراد الصور من هذا الروم'));}
- if(name==='عرض-الصور'){
-  const p=packs(gid,i.options.getString('category')||null).slice(0,35);
-  return i.reply(ep(p.length?p.map(x=>`• \`${x.id}\` — ${x.category}`).join('\n'):'المكتبة فارغة في هذا القسم.'));
- }
+ if(name==='معاينة'){await i.deferReply(ep(''));return i.editReply(await previewFromWebsite(gid,i.options.getString('category',true)));}
  if(name==='ربط-روم'){
   const c=i.options.getString('category',true);if(!guild(gid).categories[c])throw Error('التصنيف غير موجود');
   guild(gid).rooms[channel.id]=makeRoom(c,i.options.getInteger('minutes')||40);save();return i.reply(ep(`✅ تم ربط ${channel} بقسم ${c}، كل ${guild(gid).rooms[channel.id].minutes} دقيقة.`));
@@ -343,61 +292,46 @@ async function commands(i,client){
   return i.editReply(example?`🔎 ${cat}: ${example.sourceUrl}\nهذه معاينة مصدر، وليست أفتارًا أو بنرًا معتمدًا للنشر.`:'لم أجد نتيجة جديدة مطابقة لفلاتر المصدر.');
  }
  if(name==='مجموعات-4k'){await i.deferReply(ep(''));return i.editReply(await postPcCollectionLinks(client,gid,channel.id));}
- if(name==='إضافة-صورة'){
-  await i.deferReply(ep(''));
-  return i.editReply(await addFromInteraction(i,i.options.getString('category',true),i.options.getAttachment('avatar',true),i.options.getAttachment('banner'),i.options.getString('title'),i.options.getBoolean('confirm_photo'),i.options.getString('film_source'),i.options.getBoolean('confirm_anime')));
- }
- if(name==='حذف-صورة'){
-  const id=i.options.getString('id',true);const p=removePack(gid,id);if(!p)return i.reply(ep('هذا الطقم غير قابل للحذف أو غير موجود.'));
-  save();await deleteCustom(p);return i.reply(ep('✅ حذفت الطقم من المكتبة.'));
- }
  if(name==='مصادر')return i.reply(ep(SOURCE_CREDITS));
  if(name==='جلب-صور'){await i.deferReply(ep(''));return i.editReply(await importImages(gid,i.options.getString('category',true),true));}
- if(name==='استيراد-حسابي'){await i.deferReply(ep(''));return i.editReply(await importOwnProfile(i,client));}
+ return i.reply(ep('هذا الأمر أزيل في النسخة الجديدة. افتح /لوحة-التحكم لاختيار الأوامر الحالية.'));
 }
 async function menus(i,client){
  const id=i.customId,gid=i.guildId;
  if(id==='sas:menu'){
-  const action=i.values[0],readOnly=new Set(['categories','rooms','status','packs','preview']);
+  const action=i.values[0],readOnly=new Set(['categories','rooms','status','credits']);
+  if(!ACTIONS.some(([value])=>value===action))return i.update(ui('هذا الخيار أزيل. اختر أمرًا من القائمة الجديدة:',{components:[panel()]}));
   if(!readOnly.has(action)&&!admin(i))return i.reply(ep('⛔ للمشرفين فقط'));
   if(action==='setup-rooms'){await i.deferUpdate();const text=await setupFiveRooms(i);return i.editReply(ui(text,{components:[panel()]}));}
   if(action==='categories')return i.update(ui(categoryText(gid),{components:[panel()]}));
   if(action==='rooms')return i.update(ui(roomText(gid),{components:[panel()]}));
   if(action==='status')return i.update(ui(stateText(gid),{components:[panel()]}));
   if(action==='credits')return i.update(ui(SOURCE_CREDITS,{components:[panel()]}));
-  if(action==='packs')return i.update(ui(packs(gid).slice(0,35).map(x=>`• ${x.id} — ${x.category}`).join('\n')||'المكتبة فارغة',{components:[panel()]}));
   if(action==='preview')return i.update(ui('اختر تصنيف المعاينة:',{components:[catRow(gid,'preview')]}));
-  if(action==='add')return i.update(ui('لرفع الصور استخدم الأمر **/إضافة-صورة** واختر القسم ثم ارفع الأفتار والبنر.',{components:[panel()]}));
   if(action==='fetch')return i.update(ui('اختر التصنيف الذي تريد جلب الصور له:',{components:[catRow(gid,'fetch')]}));
-  if(action==='wallhaven')return i.update(ui('اختر تصنيفًا لاستعراض رابط من Wallhaven (لا يُرفع تلقائيًا للمكتبة):',{components:[catRow(gid,'wallhaven')]}));
+  if(action==='wallhaven')return i.update(ui('اختر تصنيفًا لاستعراض رابط من Wallhaven (لا ينشر تلقائيًا):',{components:[catRow(gid,'wallhaven')]}));
   return i.update(ui('اختر الروم:',{components:[chanRow(action)]}));
  }
  if(id.startsWith('sas:channel:')){
   if(!admin(i))return i.reply(ep('⛔ للمشرفين فقط'));
   const action=id.split(':')[2],cid=i.values[0];
-  if(['bind','source'].includes(action))return i.update(ui('اختر التصنيف:',{components:[catRow(gid,action,cid)]}));
+  if(action==='bind')return i.update(ui('اختر التصنيف:',{components:[catRow(gid,action,cid)]}));
   if(action==='minutes')return i.showModal(modal('minutes',cid));
-  if(action==='source-stop'){delete guild(gid).sources[cid];save();return i.update(ui('✅ توقف الاستيراد من هذا الروم',{components:[panel()]}));}
   if(action==='start'||action==='stop'){
    const r=currentRoom(gid,cid);r.enabled=action==='start';r.nextAt=Date.now()+5000;r.revision=(r.revision||0)+1;save();return i.update(ui('✅ تم '+(r.enabled?'التشغيل':'الإيقاف'),{components:[panel()]}));
   }
   if(action==='unbind'){delete guild(gid).rooms[cid];save();return i.update(ui('✅ تم الفصل',{components:[panel()]}));}
   if(action==='post'){await i.deferUpdate();const res=await post(client,gid,cid,{forced:true});return i.editReply(ui(res,{components:[panel()]}));}
   if(action==='4k-links'){await i.deferUpdate();const res=await postPcCollectionLinks(client,gid,cid);return i.editReply(ui(res,{components:[panel()]}));}
+  return i.update(ui('هذا الخيار أزيل. اختر أمرًا من القائمة الجديدة:',{components:[panel()]}));
  }
  if(id.startsWith('sas:category:')){
   const [, , action,cid]=id.split(':'),cat=i.values[0];
-  if(action!=='preview'&&!admin(i))return i.reply(ep('⛔ للمشرفين فقط'));
+  if(!admin(i))return i.reply(ep('⛔ للمشرفين فقط'));
   if(action==='bind'){
    guild(gid).rooms[cid]=makeRoom(cat,40);save();return i.update(ui(`✅ ربطت <#${cid}> بقسم ${cat} — كل 40 دقيقة`,{components:[panel()]}));
   }
-  if(action==='source'){guild(gid).sources[cid]=cat;save();return i.update(ui(`✅ سيضيف البوت صور المشرفين من <#${cid}> إلى ${cat} عند تفعيل ENABLE_SOURCE_CHANNELS=true`,{components:[panel()]}));}
-  if(action==='preview'){
-   await i.deferUpdate();const p=packs(gid,cat)[0];
-   if(!p)return i.editReply(ui('المكتبة فارغة في هذا القسم',{components:[panel()]}));
-   if(p.remote)return i.editReply(ui('معاينة من قسم '+cat,{embeds:unsplashEmbeds(p),files:[],components:[panel()]}));
-   const output=await renderCard(p);return i.editReply(ui('معاينة من قسم '+cat,{files:[new AttachmentBuilder(output.buffer,{name:output.filename})],components:[panel()]}));
-  }
+  if(action==='preview'){await i.deferUpdate();return i.editReply({...await previewFromWebsite(gid,cat),components:[panel()]});}
   if(action==='fetch'){await i.deferUpdate();const res=await importImages(gid,cat,true);return i.editReply(ui(res,{components:[panel()]}));}
   if(action==='wallhaven'){
    await i.deferUpdate();
@@ -405,6 +339,7 @@ async function menus(i,client){
    const example=await searchWallhaven(cat,new Set(),{seed:Math.floor(Date.now()/60000)%10000});
    return i.editReply(ui(example?`🔎 ${cat}: ${example.sourceUrl}\nهذا رابط مصدر، وليس طقمًا متناسقًا معتمدًا للنشر.`:'لا توجد نتيجة مناسبة بهذا البحث.',{components:[panel()]}));
   }
+  return i.update(ui('هذا الخيار أزيل. اختر أمرًا من القائمة الجديدة:',{components:[panel()]}));
  }
 }
 async function buttons(i,client){
@@ -424,7 +359,7 @@ async function buttons(i,client){
   return i.reply(ep('هل تريد حذف منشور الخلفية من الروم؟',{components:[confirm]}));
  }
  const p=pack(i.guildId,id);
- if(!p)return i.reply(ep('هذه الصورة لم تعد متاحة في المكتبة.'));
+ if(!p)return i.reply(ep('ملفات هذه الصورة لم تعد متاحة.'));
  if(action==='download'){
   if(p.remote){
    await i.deferReply(ep(''));
@@ -435,7 +370,7 @@ async function buttons(i,client){
    return i.editReply(ui('📥 افتح الصورة الأصلية لحفظها؛ روابط المصدر والمصورين في المنشور.',{components:[links]}));
   }
   await i.deferReply(ep(''));
-  // Use safe resolved paths for both custom and bundled assets.
+  // Read only the saved website files belonging to this message.
   const {mediaPath}=await import('./db.js');
   const a=[new AttachmentBuilder(mediaPath(p.avatar),{name:p.kind==='wallpaper'?'pc-wallpaper.jpg':'avatar.jpg'})];
   if(p.kind==='profile'){
@@ -448,13 +383,13 @@ async function buttons(i,client){
  if(action==='edit'){
   if(!admin(i))return i.reply(ep('⛔ التعديل للمشرفين فقط'));
   const m=new ModalBuilder().setCustomId('sas:rename:'+id).setTitle('تعديل اسم الطقم');
-  const inp=new TextInputBuilder().setCustomId('name').setLabel('الاسم الداخلي في المكتبة').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(55).setValue(p.title||'صورة');
+  const inp=new TextInputBuilder().setCustomId('name').setLabel('اسم الطقم').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(55).setValue(p.title||'صورة');
   return i.showModal(m.addComponents(new ActionRowBuilder().addComponents(inp)));
  }
  if(action==='delete'){
   if(!mod(i))return i.reply(ep('⛔ الحذف للمشرفين فقط'));
   const confirm=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`sas:confirm:${i.message.id}`).setLabel('تأكيد حذف المنشور').setStyle(ButtonStyle.Danger));
-  return i.reply(ep('هل تريد حذف هذا المنشور من الروم؟ (لن يحذف الصورة من المكتبة)',{components:[confirm]}));
+  return i.reply(ep('هل تريد حذف هذا المنشور من الروم؟ (تظل ملفات التحميل وسجل منع التكرار)',{components:[confirm]}));
  }
 }
 async function modals(i){
@@ -468,32 +403,19 @@ async function modals(i){
  }
  if(action==='rename'){
   const p=pack(i.guildId,value);if(!p)throw Error('الصورة محذوفة');
-  guild(i.guildId).titleOverrides[value]=i.fields.getTextInputValue('name').slice(0,55);save();return i.reply(ep('✅ تم تعديل الاسم داخل المكتبة'));
+  guild(i.guildId).titleOverrides[value]=i.fields.getTextInputValue('name').slice(0,55);save();return i.reply(ep('✅ تم تعديل اسم الطقم'));
  }
 }
 export async function startAutomation(client,{timers=globalThis}={}){
  // Reconcile before any timer can publish, including the initial 5-second tick.
  try{await recoverPreviousPosts(client);}catch(e){console.warn('History reconciliation',err(e));}
- const handles=[];let stopped=false,posting=false,fetching=false,cursor=0;
+ const handles=[];let stopped=false,posting=false;
  const schedule=(kind,callback,ms)=>handles.push([kind,timers[kind](callback,ms)]);
  const postTick=async()=>{
   if(stopped||posting)return;posting=true;
   try{await scheduler(client);}catch(e){console.error('Automatic posting:',err(e));}
   finally{posting=false;}
  };
- const fetchTick=async()=>{
-  if(stopped||fetching)return;fetching=true;
-  try{
-   const active=[];
-   for(const [gid,g] of Object.entries(store.guilds))for(const room of Object.values(g.rooms||{}))
-    if(room.enabled&&['girls','boys','movies'].includes(room.category)&&!active.some(x=>x[0]===gid&&x[1]===room.category))active.push([gid,room.category]);
-   if(!active.length)return;
-   const [gid,category]=active[cursor++%active.length];
-   await importImages(gid,category,false);
-  }catch(e){console.error('Automatic image source:',err(e));}
-  finally{fetching=false;}
- };
- if(!sourcesOnly()&&process.env.AUTO_FETCH!=='false')schedule('setInterval',fetchTick,300000);
  schedule('setInterval',postTick,20000);
  schedule('setTimeout',postTick,5000);
  return {stop(){
@@ -526,40 +448,11 @@ export async function handleInteraction(i,client){
  }
 }
 
-// Posting attachments in an admin-configured source room is an explicit review
-// by a Manage Server member. Movie uploads must also name their HTTPS source.
-export async function handleSourceMessage(message){
- try{
-  if(!message.guildId||!message.author||message.author.bot)return;
-  const category=guild(message.guildId).sources[message.channelId];
-  if(!category||!message.member?.permissions.has(PermissionFlagsBits.ManageGuild))return;
-  const files=message.attachments.filter(a=>a.contentType?.startsWith('image/'));
-  const [avatar,banner]=[...files.values()];if(!avatar)return;
-  let filmSource=null;
-  if(category==='movies'){
-   filmSource=String(message.content||'').match(/https:\/\/[^\s<>]+/i)?.[0]?.replace(/[),.;!?]+$/,'')||null;
-   if(!filmSource||filmSource.length>250)throw Error('أضف رابط HTTPS لمصدر الفيلم مع الصور (حتى 250 حرفًا).');
-  }
-  const result=await addFromInteraction({guildId:message.guildId},category,avatar,banner,'من روم المصدر',
-   ['girls','boys'].includes(category),filmSource,category==='anime');
-  await message.react('✅').catch(()=>{});console.log('Source channel',result);
-  return result;
- }catch(e){
-  console.error('Source import failed',err(e));
-  await message.react('⚠️').catch(()=>{});
-  await message.reply(ui('⚠️ تعذر استيراد الصور: '+err(e))).catch(()=>{});
-  return 'تعذر الاستيراد: '+err(e);
- }
-}
-
 export async function start(token){
- const intents=[GatewayIntentBits.Guilds];
- if(process.env.ENABLE_SOURCE_CHANNELS==='true')intents.push(GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent);
- const client=new Client({intents});
+ const client=new Client({intents:[GatewayIntentBits.Guilds]});
  migrateLegacySettings();
  client.once(Events.ClientReady,async c=>{
   console.log('✅ Logged in as '+c.user.tag);
-  try{const up=await upgradeLibraryFingerprints();console.log('✅ Library fingerprints upgraded:',up.updated,'skipped:',up.skipped);}catch(e){console.warn('Library upgrade:',err(e));}
   try{
    const rest=new REST({version:'10'}).setToken(token);
    const target=process.env.GUILD_ID?.trim();
@@ -569,9 +462,6 @@ export async function start(token){
   await startAutomation(client);
  });
  client.on(Events.InteractionCreate,i=>handleInteraction(i,client));
- if(process.env.ENABLE_SOURCE_CHANNELS==='true'){
-  client.on(Events.MessageCreate,handleSourceMessage);
- }
  client.on(Events.Error,e=>console.error('Discord client error',e));
  await client.login(token);
 }

@@ -13,17 +13,32 @@ try{
  await fs.cp(path.join(root,'src'),path.join(tmp,'src'),{recursive:true});
  await fs.writeFile(path.join(tmp,'package.json'),'{"type":"module"}');
  await fs.symlink(path.join(root,'node_modules'),path.join(tmp,'node_modules'),'dir');
- await fs.symlink(path.join(root,'assets'),path.join(tmp,'assets'),'dir');
  const avatar=await sharp({create:{width:800,height:1000,channels:3,background:'#7c6d88'}})
   .composite([{input:Buffer.from('<svg width="800" height="1000"><circle cx="220" cy="350" r="180" fill="#281d3b"/></svg>')}]).png().toBuffer();
  const banner=await sharp({create:{width:1600,height:900,channels:3,background:'#81708e'}})
   .composite([{input:Buffer.from('<svg width="1600" height="900"><path d="M0 850 L700 80 L1600 850 Z" fill="#392d45"/></svg>')}]).png().toBuffer();
  await fs.writeFile(path.join(tmp,'avatar.png'),avatar);await fs.writeFile(path.join(tmp,'banner.png'),banner);
+ await fs.writeFile(path.join(tmp,'src/image-sources.js'),`
+import fs from 'node:fs/promises';
+export const SOURCE_CREDITS='Website fixtures';
+let generation=0;
+export async function fetchCategoryAssets(category){
+ generation++;
+ if(category==='anime')return {avatar:await fs.readFile('avatar.png'),banner:await fs.readFile('banner.png'),provider:'Wallhaven',verificationSource:'wallhaven-anime-pair',sourceIds:['wallhaven:a1b2c3','wallhaven:d4e5f6'],sourceId:'wallhaven:a1b2c3|wallhaven:d4e5f6',sourceUrl:'https://wallhaven.cc/w/a1b2c3',sourceBannerUrl:'https://wallhaven.cc/w/d4e5f6',credit:'Fixture artist',license:'Fixture only'};
+ const a='fresh'+generation+'av',b='fresh'+generation+'bn';
+ return {remote:true,kind:'profile',category,provider:'Unsplash',verificationSource:'unsplash-photo',photoVerified:true,boysStyle:'dark-street-v1',boysTheme:'mono-urban',
+ sourceIds:['unsplash:'+a,'unsplash:'+b],sourceId:'unsplash:'+a+'|unsplash:'+b,
+ avatarURL:'https://images.unsplash.com/photo-'+a+'?ixid=original',bannerURL:'https://images.unsplash.com/photo-'+b+'?ixid=original',
+ sourceUrl:'https://unsplash.com/photos/'+a,sourceBannerUrl:'https://unsplash.com/photos/'+b,
+ downloadLocations:['https://api.unsplash.com/photos/'+a+'/download','https://api.unsplash.com/photos/'+b+'/download'],
+ credits:{avatar:{name:'Fresh Portrait',url:'https://unsplash.com/@portrait'},banner:{name:'Fresh Scene',url:'https://unsplash.com/@scene'}}};
+}
+`);
  const output=execFileSync(process.execPath,['--input-type=module','-'],{cwd:tmp,encoding:'utf8',input:`
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {Client,Collection,MessagePayload,PermissionsBitField,PermissionFlagsBits} from 'discord.js';
-import {handleInteraction,handleSourceMessage} from './src/bot.js';
+import {handleInteraction} from './src/bot.js';
 import {guild,packs,addPack,makeRoom} from './src/db.js';
 const client=new Client({intents:[]});
 const bot={user:{id:'test-bot'},channels:{fetch:async()=>{throw Error('Unexpected channel request');}}};
@@ -60,8 +75,9 @@ const remote={id:'remote-boy',remote:true,kind:'profile',category:'boys',provide
 addPack('interactions',remote);
 const navigation=interaction('select',{customId:'sas:category:preview:0',values:['boys']});
 await handleInteraction(navigation,bot);
-assert.equal(navigation.state.embeds[0].image.url,remote.bannerURL);
-assert.equal(navigation.state.embeds[0].thumbnail.url,remote.avatarURL);
+assert.notEqual(navigation.state.embeds[0].image.url,remote.bannerURL);
+assert(navigation.state.embeds[0].image.url.includes('fresh'));
+assert(navigation.state.embeds[0].thumbnail.url.includes('fresh'));
 assert.deepEqual(navigation.state.attachments,[]);
 // Discord preserves omitted fields, so each transition must actually clear them.
 navigation.customId='sas:menu';navigation.values=['status'];await handleInteraction(navigation,bot);
@@ -74,8 +90,8 @@ navigation.customId='sas:menu';navigation.values=['rooms'];await handleInteracti
 assert.deepEqual(navigation.state.embeds,[]);assert.deepEqual(navigation.state.attachments,[],'text navigation clears image attachments');
 const local=packs('interactions','anime')[0];
 const slashPreview=interaction('command',{commandName:'معاينة',state:{embeds:[{description:'stale'}],attachments:[]},
- options:{getChannel:()=>null,getString:name=>name==='id'?local.id:null}});
-await handleInteraction(slashPreview,bot);assert.deepEqual(slashPreview.state.embeds,[]);assert.equal(slashPreview.state.attachments.length,1);
+ options:{getChannel:()=>null,getString:name=>name==='category'?'boys':null}});
+await handleInteraction(slashPreview,bot);assert.equal(slashPreview.state.embeds.length,1);assert.deepEqual(slashPreview.state.attachments,[]);
 
 // A user can save the exact composite card as a PNG, as well as both originals.
 const download=interaction('button',{customId:'sas:download:'+local.id,memberPermissions:new PermissionsBitField()});
@@ -86,11 +102,6 @@ assert.equal(download.state.attachments.length,3);
 const cardInfo=await (await import('sharp')).default(download.files[0].data).metadata();
 assert.equal(cardInfo.format,'png');assert.equal(cardInfo.width,1080);assert.equal(cardInfo.height,700);
 assert(download.files.every(file=>file.data.length>1000));
-const wallpaper=packs('interactions','pc_wallpapers')[0];
-const wallpaperDownload=interaction('button',{customId:'sas:download:'+wallpaper.id});
-await handleInteraction(wallpaperDownload,bot);
-assert.equal(wallpaperDownload.files.length,1);assert.equal(wallpaperDownload.files[0].name,'pc-wallpaper.jpg');
-
 // Confirm deletion is acknowledged before any potentially slow REST request.
 const deletion=interaction('button',{customId:'sas:confirm:original-message'});
 const deletionClient={user:{id:'test-bot'},channels:{fetch:async()=>{
@@ -121,42 +132,14 @@ await handleInteraction(interaction('channel',{customId:'sas:channel:stop',value
 await handleInteraction(interaction('modal',{customId:'sas:modal:minutes:control-room',fields:{getTextInputValue:()=> '90'}}),bot);
 assert.equal(room.revision,5);assert.equal(room.minutes,90);
 
-// A configured source room plus an administrator's upload is the review. Only
-// CDN attachments are downloaded; movie attribution must be supplied explicitly.
-const av=await fs.readFile('avatar.png'),bn=await fs.readFile('banner.png');let downloads=0;
-globalThis.fetch=async raw=>{
- const u=new URL(raw);assert.equal(u.hostname,'cdn.discordapp.com');downloads++;
- if(u.pathname.endsWith('invalid.png'))return new Response('not an image',{headers:{'content-type':'image/png'}});
- return new Response(u.pathname.endsWith('banner.png')?bn:av,{headers:{'content-type':'image/png'}});
-};
-function sourceMessage(category,{gid='source-'+category,authorized=true,botAuthor=false,configured=true,content='',missingBanner=false,invalidImage=false}={}){
- const channelId=gid+'-room';if(configured)guild(gid).sources[channelId]=category;
- const first=category==='pc_wallpapers'?'banner.png':invalidImage?'invalid.png':'avatar.png';
- const values=[['a',{url:'https://cdn.discordapp.com/attachments/test/'+first,size:av.length,contentType:'image/png'}]];
- if(category!=='pc_wallpapers'&&!missingBanner)values.push(['b',{url:'https://cdn.discordapp.com/attachments/test/banner.png',size:bn.length,contentType:'image/png'}]);
- return {guildId:gid,channelId,author:{bot:botAuthor},content,attachments:new Collection(values),reactions:[],
- member:{permissions:new PermissionsBitField(authorized?[PermissionFlagsBits.ManageGuild]:[])},
- async reply(payload){this.errorReply=payload;},
- async react(emoji){this.reactions.push(emoji);}};
-}
-for(const category of ['girls','boys','anime','movies','pc_wallpapers']){
- const message=sourceMessage(category,{content:category==='movies'?'فيلم https://www.imdb.com/title/tt1375666/':''});
- const result=await handleSourceMessage(message);assert(result.startsWith('✅'),result);
- const record=guild(message.guildId).packs[0];assert(record);assert.equal(record.category,category);
- assert.deepEqual(message.reactions,['✅']);
- if(['girls','boys'].includes(category))assert.equal(record.verificationSource,'moderator-photo');
- if(category==='movies'){assert.equal(record.filmVerified,true);assert.equal(record.sourceUrl,'https://www.imdb.com/title/tt1375666/');}
-}
-for(const settings of [{authorized:false},{botAuthor:true},{configured:false}]){
- const before=downloads,message=sourceMessage('boys',{...settings,gid:'blocked-'+JSON.stringify(settings)});
- assert.equal(await handleSourceMessage(message),undefined);assert.equal(downloads,before);assert.deepEqual(message.reactions,[]);
-}
-for(const [category,settings,pattern] of [['movies',{content:'لا يوجد رابط'},/HTTPS/],['boys',{missingBanner:true},/بنر/],['anime',{invalidImage:true},/تعذر/]]){
- const message=sourceMessage(category,{...settings,gid:'invalid-'+category});const result=await handleSourceMessage(message);
- assert.match(result,pattern);assert.match(message.errorReply.content,/تعذر استيراد/);assert.deepEqual(message.reactions,['⚠️']);assert.equal(guild(message.guildId).packs.length,0);
-}
+// Interactions on an old control panel must acknowledge the removed feature.
+const staleMenu=interaction('select',{customId:'sas:menu',values:['packs']});
+await handleInteraction(staleMenu,bot);assert.match(staleMenu.state.content,/أزيل/);
+assert(staleMenu.state.components.length>0);
+const staleCommand=interaction('command',{commandName:'عرض-الصور'});
+await handleInteraction(staleCommand,bot);assert.match(staleCommand.state.content,/أزيل/);
 await client.destroy();
-console.log('PASS: real Discord payload navigation, local/remote previews, deferred deletion, autocomplete errors, scheduling revisions and reviewed source-room imports');
+console.log('PASS: real Discord payload navigation, local/remote previews, deferred deletion, autocomplete errors, scheduling revisions and fresh website previews');
 `});
  process.stdout.write(output);assert(output.includes('PASS:'));
 }finally{await fs.rm(tmp,{recursive:true,force:true});}

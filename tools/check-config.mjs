@@ -12,7 +12,7 @@ for(const name of ['DISCORD_TOKEN','UNSPLASH_ACCESS_KEY','FANART_API_KEY']){
  const valid=Boolean(value&&!/^(?:YOUR_|PUT_|PASTE_)/i.test(value));
  check(name,valid,valid?'موجود دون عرض قيمته':'أضف القيمة في .env أو إعدادات الاستضافة');
 }
-for(const name of ['AUTO_FETCH','SOURCE_ONLY','WALLHAVEN_ENABLED','ENABLE_SOURCE_CHANNELS']){
+for(const name of ['AUTO_FETCH','WALLHAVEN_ENABLED']){
  const value=process.env[name];check(name,value===undefined||['true','false'].includes(value),'استخدم true أو false');
 }
 check('GUILD_ID',!process.env.GUILD_ID?.trim()||/^\d{17,22}$/.test(process.env.GUILD_ID.trim()),'اختياري؛ معرف رقمي للسيرفر');

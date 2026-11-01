@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {isUnsplashRecord} from '../src/unsplash-record.js';
-import {addPack,packs,choose,makeRoom,guild,samePhoto} from '../src/db.js';
+import {addPack,packs,pack,makeRoom,guild,samePhoto} from '../src/db.js';
 import {unsplashEmbeds} from '../src/bot.js';
 import {deleteCustom} from '../src/media.js';
 
@@ -33,7 +33,7 @@ const count=packs('remote-tests','girls',state).length;
 const imported=addPack('remote-tests',valid,state);
 assert.equal(packs('remote-tests','girls',state).length,count+1,'remote pairs need no local paths or fingerprints');
 const room=makeRoom('girls');room.usedIds=packs('remote-tests','girls',state).filter(p=>p.id!==imported.id).map(p=>p.id);
-assert.equal(choose('remote-tests',room,state).id,imported.id);
+assert.equal(pack('remote-tests',imported.id,state).id,imported.id);
 assert(samePhoto(valid,pair('banner01','avatar02')),'photo IDs cannot be recycled across avatar/banner roles');
 assert.throws(()=>addPack('remote-tests',pair('banner01','avatar02'),state),/موجود/);
 const rendered=unsplashEmbeds(imported)[0].toJSON();

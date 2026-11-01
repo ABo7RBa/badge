@@ -1,17 +1,10 @@
 import assert from 'node:assert/strict';
-import {guild,packs,choose,sent,makeRoom} from '../src/db.js';
+import {makeRoom,sent} from '../src/db.js';
 import {packIdsFromMessages,reconcileRoom} from '../src/history.js';
-const state={version:12,guilds:{}};const id='server';guild(id,state);
 const room=makeRoom('girls',40,0);
-const available=packs(id,'girls',state);
-const used=[];
-for(let i=0;i<available.length;i++){
- const next=choose(id,room,state);assert(next,'should have enough distinct images');assert(!used.includes(next.id));
- used.push(next.id);sent(room,next.id,1e6+i*2400000);
-}
-assert.equal(choose(id,room,state),null,'must STOP instead of silently recycle after exhausting pack library');
-const message={author:{id:'bot'},components:[{components:[{customId:'sas:download:girls-realistic-01'}]}]};
-assert.deepEqual(packIdsFromMessages([message,{...message,author:{id:'another'}}],'bot'),['girls-realistic-01']);
-const newRoom=makeRoom('girls',40,0);reconcileRoom(newRoom,['girls-realistic-01','girls-photoreal-03']);
-assert(!['girls-realistic-01','girls-photoreal-03'].includes(choose(id,newRoom,state).id));
-console.log('PASS: no repeat after exhaustion; prior message history reconciled');
+sent(room,'pair01',1000);sent(room,'pair01',2000);sent(room,'pair02',3000);
+assert.deepEqual(room.usedIds,['pair01','pair02']);assert.equal(room.nextAt,3000+2400000);
+const message={author:{id:'bot'},components:[{components:[{customId:'sas:download:pair01'}]}]};
+assert.deepEqual(packIdsFromMessages([message,{...message,author:{id:'another'}}],'bot'),['pair01']);
+reconcileRoom(room,['pair01','pair03']);assert.equal(new Set(room.usedIds).size,3);
+console.log('PASS: persistent duplicate history and bot-only previous-message reconciliation');

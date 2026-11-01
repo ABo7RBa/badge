@@ -7,11 +7,6 @@ import {validatePair,visualSignature,orientedDimensions} from './quality-gate.js
 const safeSVG=x=>String(x||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const svg=s=>Buffer.from(s,'utf8');
 const MB=8*1024*1024;
-export async function downloadAttachment(a){
- if(!a?.url||a.size>MB)throw Error('الصورة يجب أن تكون أقل من 8MB');
- const u=new URL(a.url);if(!['cdn.discordapp.com','media.discordapp.net'].includes(u.hostname)||u.protocol!=='https:')throw Error('ارفع الصورة كمرفق في ديسكورد');
- return await readLimited(u.toString());
-}
 export async function readLimited(url){
  const u=new URL(url);if(u.protocol!=='https:')throw Error('HTTPS مطلوب');
  const resp=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(20000),headers:{'User-Agent':'ABO7RB/16.0 (Discord image bot)'}});

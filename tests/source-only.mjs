@@ -12,7 +12,6 @@ try{
  await fs.cp(path.join(root,'src'),path.join(temp,'src'),{recursive:true});
  await fs.writeFile(path.join(temp,'package.json'),'{"type":"module"}');
  await fs.symlink(path.join(root,'node_modules'),path.join(temp,'node_modules'),'dir');
- await fs.symlink(path.join(root,'assets'),path.join(temp,'assets'),'dir');
  for(const [kind,width,height,shape] of [['avatar',800,1000,'<circle cx="220" cy="350" r="180" fill="#281d3b"/>'],['banner',1600,900,'<path d="M0 850 L700 80 L1600 850 Z" fill="#392d45"/>']]){
   await sharp({create:{width,height,channels:3,background:'#81708e'}}).composite([{input:Buffer.from('<svg width="'+width+'" height="'+height+'">'+shape+'</svg>')}]).png().toFile(path.join(temp,kind+'.png'));
  }
@@ -21,10 +20,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {startAutomation,importImages,post} from './src/bot.js';
 import {guild,packs,makeRoom,addPack} from './src/db.js';
-delete process.env.SOURCE_ONLY; // Strict sources must be the default for existing .env files too.
+process.env.SOURCE_ONLY='false'; // The removed legacy flag must never re-enable a library.
 process.env.AUTO_FETCH='true';process.env.WALLHAVEN_ENABLED='true';
 process.env.FANART_API_KEY='test';process.env.FANART_MOVIE_IDS='tt1375666';
-const seed=JSON.parse(await fs.readFile('assets/seed.json','utf8')).find(p=>p.category==='boys');
+const seed={kind:'profile',avatar:'avatar.png',banner:'banner.png',reviewedWithV86:true,visualHash:'a'.repeat(64),bannerVisualHash:'b'.repeat(64),avatarDHash:'abcd',bannerDHash:'1234'};
 const av=await fs.readFile('avatar.png'),bn=await fs.readFile('banner.png');
 let mode='good',phase='fresh',requests=[];
 globalThis.fetch=async raw=>{
@@ -52,8 +51,8 @@ globalThis.fetch=async raw=>{
 };
 for(const category of ['girls','boys','movies','anime','pc_wallpapers'])for(const outcome of ['good','fail','empty']){
  const gid=category+'-'+outcome,g=guild(gid),room=g.rooms.room=makeRoom(category);
- if(['girls','boys','movies'].includes(category))addPack(gid,{...seed,id:'old-manual',category,bundled:false,importedAutomatically:false,photoVerified:true,categoryVerified:true,filmVerified:category==='movies',verificationSource:category==='movies'?'manual':'moderator-photo'});
- assert(packs(gid,category).length>0,'test must have an unused local library image to tempt fallback');
+ g.packs.push({...seed,id:'old-manual',category,bundled:false,importedAutomatically:false,photoVerified:true,categoryVerified:true,filmVerified:category==='movies',verificationSource:category==='movies'?'manual':'moderator-photo'});
+ assert(g.packs.some(p=>p.id==='old-manual'),'legacy saved photo must tempt fallback');
  // Pre-existing source records must also be ignored in strict mode.
  if(['girls','boys'].includes(category)){
   phase='stored';mode='good';process.env.UNSPLASH_ACCESS_KEY='stored-'+gid;

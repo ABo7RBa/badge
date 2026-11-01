@@ -78,7 +78,7 @@ for(const p of [{sourceId:'openverse:old'},{sourceId:'tmdb:movie:12'},
   {verificationSource:'commons-photo'}, {verificationSource:'openverse-photo'}])assert(isRemovedSource(p));
 assert(!isRemovedSource(girls));assert(!isRemovedSource(film));
 const state={guilds:{}};const g=guild('source-tests',state);
-const old={...packs('source-tests','anime',state)[0],id:'old-provider',bundled:false,reviewedWithV86:true,
+const old={category:'anime',kind:'profile',id:'old-provider',bundled:false,reviewedWithV86:true,
  importedAutomatically:true,categoryVerified:true,sourceId:'openverse:old'};
 g.packs.push(old);assert(!packs('source-tests',null,state).some(p=>p.id===old.id));
 assert.equal(g.packs.length,1);assert.throws(()=>addPack('source-tests',old,state),/المصدر محذوف/);
