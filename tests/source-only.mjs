@@ -44,7 +44,7 @@ globalThis.fetch=async raw=>{
  if(u.hostname==='assets.fanart.tv')return new Response(u.pathname.endsWith('poster.png')?av:bn,{headers:{'content-type':'image/png'}});
  if(u.hostname==='w.wallhaven.cc')return new Response(u.pathname.includes('a1b2c3')?av:bn,{headers:{'content-type':'image/png'}});
  if(u.hostname==='wallhaven.cc'){
-  const anime=u.searchParams.get('categories')==='010',avatar=anime&&u.searchParams.get('q').includes('portrait');
+  const anime=u.searchParams.get('categories')==='010',avatar=anime&&u.searchParams.get('atleast')==='600x600';
   const id=avatar?'a1b2c3':'d4e5f6';
   return Response.json({data:mode==='empty'?[]:[{id,url:'https://wallhaven.cc/w/'+id,category:anime?'anime':'general',purity:'sfw',dimension_x:avatar?900:2560,dimension_y:avatar?1200:1440,path:'https://w.wallhaven.cc/full/'+id.slice(0,2)+'/wallhaven-'+id+'.jpg',thumbs:{large:'https://th.wallhaven.cc/lg/'+id.slice(0,2)+'/'+id+'.jpg'}}]});
  }

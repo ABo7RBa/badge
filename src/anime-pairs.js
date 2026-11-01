@@ -3,9 +3,9 @@ import {readLimited} from './media.js';
 import {validatePair} from './quality-gate.js';
 
 const THEMES=[
- {portrait:'anime portrait cherry blossoms',scene:'anime landscape cherry blossoms',title:'أنمي • ساكورا'},
- {portrait:'anime portrait night',scene:'anime city night',title:'أنمي • ليل'},
- {portrait:'anime portrait sky',scene:'anime landscape clouds',title:'أنمي • سماء'}
+ {portrait:'cherry blossoms',scene:'cherry blossoms',title:'أنمي • ساكورا'},
+ {portrait:'night',scene:'night',title:'أنمي • ليل'},
+ {portrait:'clouds',scene:'clouds',title:'أنمي • سماء'}
 ];
 const BLOCKED=/(?:nsfw|nude|nudity|explicit|erotic|porn|sexual|gore)/i;
 export function animePairSearchUrl(kind,theme=0){

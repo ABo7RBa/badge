@@ -15,7 +15,7 @@ for(const kind of ['avatar','banner']){
 let calls=[],downloads=[],checked=0;
 const options={apiFetch:async raw=>{
  const u=new URL(raw);calls.push(u);assert.equal(u.hostname,'wallhaven.cc');
- return {ok:true,json:async()=>({data:[u.searchParams.get('q').includes('portrait')?av:bn]})};
+ return {ok:true,json:async()=>({data:[u.searchParams.get('atleast')==='600x600'?av:bn]})};
 },imageFetch:async url=>{downloads.push(url);return Buffer.from(url);},validate:async(a,b)=>{
  checked++;assert.notEqual(a.toString(),b.toString());
 }};
