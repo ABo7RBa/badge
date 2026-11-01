@@ -1,6 +1,7 @@
 // Exercise the registered automatic timers, real image pipeline and local state.
 // Providers and Discord are mocked; user storage and live services are untouched.
 import assert from 'node:assert/strict';
+process.env.SOURCE_ONLY='false';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';

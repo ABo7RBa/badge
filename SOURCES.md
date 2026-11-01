@@ -3,7 +3,7 @@
 | Category | Provider | Integration |
 | --- | --- | --- |
 | boys / girls | Unsplash | Official search/photos API; Access Key via Client-ID; source-hosted banner + portrait thumbnail with photographer/photo credits and selection tracking |
-| anime | Wallhaven | Official v1 search API; anime category, strict SFW, source preview and original page |
+| anime | Wallhaven | Official v1 API; SFW anime portrait + landscape from a shared search theme, original-image download and local pair QA/rendering |
 | pc_wallpapers | Wallhaven | General category, SFW, original size >=1920×1080; preview and page link |
 | movies | Fanart.tv | Official v3 movies endpoint, configured IMDb IDs; matching poster/background rendered locally |
 
@@ -23,3 +23,5 @@ The bundled artwork and owner uploads retain their separate sources. The local c
 No active fetch routes remain for Pexels, Pixabay, Openverse, Wikimedia Commons or TMDB. Eligible previously stored Pexels/Pixabay pairs are retained; older removed/unverified content stays quarantined according to the existing policy.
 
 Direct Unsplash documentation access returned403 in this environment; integration requirements were reviewed from the official GitHub SDK. Live signup/key issuance and authenticated service access were not verified.
+
+Default SOURCE_ONLY=true imports a new provider pair for each due post and never falls back to saved/bundled image packs. No live network or Discord-send guarantee is implied. Wallhaven full-image retrieval also requires w.wallhaven.cc. Attribution does not replace rights holders’ permissions.

@@ -66,7 +66,7 @@ assert.equal(fallbackFilm.sourceId,'fanart:movie:tt1375666');
 
 const wallhaven=cat=>({id:'a1b2c3',url:'https://wallhaven.cc/w/a1b2c3',category:cat,purity:'sfw',
  dimension_x:2560,dimension_y:1440,thumbs:{large:'https://th.wallhaven.cc/lg/a1/a1b2c3.jpg'}});
-for(const [cat,remote] of [['anime','anime'],['pc_wallpapers','general']]){
+for(const [cat,remote] of [['pc_wallpapers','general']]){
  const result=await fetchCategoryAssets(cat,new Set(),{apiFetch:async()=>({ok:true,json:async()=>({data:[wallhaven(remote)]})})});
  assert.equal(result.linkOnly,true);assert.equal(result.provider,'Wallhaven');assert.equal(result.category,cat);
 }

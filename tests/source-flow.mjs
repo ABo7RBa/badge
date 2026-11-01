@@ -1,6 +1,7 @@
 // Test remote Unsplash pairs and local Fanart cards in isolated storage.
 // No provider traffic, Discord sends or user state are touched.
 import assert from 'node:assert/strict';
+process.env.SOURCE_ONLY='false';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';

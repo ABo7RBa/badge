@@ -12,6 +12,7 @@ import {getOwnDiscordPair} from './member-source.js';
 import {pcCollectionsMessage,validatePcWallpaperRoom} from './wallpaper-links.js';
 import {randomUUID} from 'node:crypto';
 import fs from 'node:fs/promises';
+const sourcesOnly=()=>process.env.SOURCE_ONLY!=='false';
 const EVERY=60_000;const busy=new Set();const processingFetch=new Map();
 const sourceQueue=new Map();
 async function withSourceLock(key,operation){
@@ -59,7 +60,7 @@ function stateText(gid){
  const sources=Object.entries(g.fetchStatus||{}).map(([category,status])=>
   `${category}: ${status.state==='error'?'⚠️ '+status.error:status.state==='empty'?'لا توجد نتائج جديدة':'نجح آخر جلب'}`).join('\n');
  const wallhaven=process.env.WALLHAVEN_ENABLED==='false'?'Wallhaven: معطل':'Wallhaven: معاينات الأنمي وخلفيات PC';
- return `**الحالة**\nالرومات: ${Object.keys(g.rooms).length}\nالأطقم المتاحة: ${packs(gid).length}\nالنشر الافتراضي: 40 دقيقة\n${left}\n${keys}\n${wallhaven}\n${sources}\n${roomText(gid)}`.slice(0,1950);
+ return `**الحالة**\nوضع النشر: ${sourcesOnly()?'من المواقع فقط':'المكتبة والمواقع'}\nالرومات: ${Object.keys(g.rooms).length}\nالأطقم المتاحة: ${packs(gid).length}\nالنشر الافتراضي: 40 دقيقة\n${left}\n${keys}\n${wallhaven}\n${sources}\n${roomText(gid)}`.slice(0,1950);
 }
 async function recoverPreviousPosts(client){
  let modified=false;
@@ -102,7 +103,7 @@ export async function post(client,gid,cid,{forced=false}={}){
   let sourceFailure=null;
   // Wallhaven serves source links + preview, not rehosted/edited files.
   // Never turn unlicensed Wallhaven submissions into stored avatar/banner pairs.
-  if(['anime','pc_wallpapers'].includes(r.category)&&process.env.WALLHAVEN_ENABLED!=='false') {
+  if((r.category==='pc_wallpapers'||r.category==='anime'&&!sourcesOnly())&&process.env.WALLHAVEN_ENABLED!=='false') {
    try{
     const result=await withSourceLock(gid,async()=>{
     if(!stillCurrent())return cancelled;
@@ -126,21 +127,34 @@ export async function post(client,gid,cid,{forced=false}={}){
      return null;
     });
     if(result)return result;
-   }catch(e){sourceFailure=err(e);console.warn('Wallhaven failed; using local fallback:',sourceFailure);}
+   }catch(e){sourceFailure=err(e);console.warn('Wallhaven source failed:',sourceFailure);}
   }
-  // No re-posting: when the unused queue runs out, fetch a fresh verified pack.
-  // If none is found, skip this interval instead of repeating old assets.
-  let picked=choose(gid,r);
-  if(!picked && ['girls','boys','movies'].includes(r.category) && process.env.AUTO_FETCH!=='false') {
-    try {await importImages(gid,r.category,false,{demand:true});picked=choose(gid,r);}
-    catch (sourceErr) {console.warn('External image fetch:',err(sourceErr));}
+  let picked=null;
+  const pairCategory=['girls','boys','movies','anime'].includes(r.category);
+  if(sourcesOnly()){
+   if(pairCategory&&process.env.AUTO_FETCH!=='false'){
+    const before=new Set(guild(gid).packs.map(p=>p.id));
+    await importImages(gid,r.category,false,{demand:true});
+    const status=guild(gid).fetchStatus?.[r.category];
+    if(status?.state==='success'&&status.recordId&&!before.has(status.recordId)){
+     const fresh=pack(gid,status.recordId);
+     const provider=r.category==='movies'?'Fanart.tv':r.category==='anime'?'Wallhaven':'Unsplash';
+     if(fresh?.importedAutomatically&&fresh.category===r.category&&fresh.provider===provider)picked=fresh;
+    }
+   }else if(pairCategory)sourceFailure='الجلب معطل؛ فعّل AUTO_FETCH=true للنشر من المواقع';
+   else if(process.env.WALLHAVEN_ENABLED==='false')sourceFailure='مصدر Wallhaven معطل؛ فعّل WALLHAVEN_ENABLED=true';
+  }else{
+   picked=choose(gid,r);
+   if(!picked&&pairCategory&&process.env.AUTO_FETCH!=='false'){
+    await importImages(gid,r.category,false,{demand:true});picked=choose(gid,r);
+   }
   }
   if(!stillCurrent())return cancelled;
   if(!picked){
    const status=guild(gid).fetchStatus?.[r.category];
    const reason=sourceFailure||(status?.state==='error'?status.error:null);
    r.nextAt=Date.now()+(reason?5:Math.max(10,r.minutes))*EVERY;
-   r.error=reason||'نفدت الصور غير المكررة لقسم '+r.category;save();
+   r.error=reason||(sourcesOnly()?'لم يعثر المصدر على صور جديدة مناسبة لقسم ':'نفدت الصور غير المكررة لقسم ')+r.category;save();
    return reason?'تعذر جلب صور جديدة: '+reason:'لا توجد صور جديدة؛ توقفت دورة التكرار حتى تتوفر صور أخرى';
   }
   if(picked.remote){
@@ -197,8 +211,8 @@ async function doImportImages(gid,category,force=false,{demand=false}={}){
  const previous=g.fetchStatus[category];
  if(!force&&previous?.retryAt>Date.now())return previous.state==='error'?'تعذر الجلب مؤخرًا: '+previous.error:'لم توجد نتائج مؤخرًا، سيُبحث لاحقًا';
  if(!force&&!demand&&Date.now()-(g.fetchAt[category]||0)<Math.max(30,Math.min(fetchMinutes,1440))*EVERY)return 'تم البحث مؤخرًا، سيُبحث لاحقًا';
- const fetched=(state,error=null)=>{
-  const now=Date.now();g.fetchStatus[category]={state,at:now,error,retryAt:state==='success'?0:now+5*EVERY};
+ const fetched=(state,error=null,recordId=null)=>{
+  const now=Date.now();g.fetchStatus[category]={state,at:now,error,recordId,retryAt:state==='success'?0:now+5*EVERY};
   if(state!=='error')g.fetchAt[category]=now;save();
  };
  try {
@@ -211,12 +225,12 @@ async function doImportImages(gid,category,force=false,{demand=false}={}){
   const id='sas-'+randomUUID().replaceAll('-','').slice(0,14);
   if(external.remote){
    const record=addPack(gid,{...external,id,category,kind:'profile',importedAutomatically:true,categoryVerified:true});
-   fetched('success');return `✅ أضفت طقمًا جديدًا لقسم ${category} من Unsplash. (${record.id})`;
+   fetched('success',null,record.id);return `✅ أضفت طقمًا جديدًا لقسم ${category} من Unsplash. (${record.id})`;
   }
   let fileInfo;
   try {
    fileInfo=await normalizeFromUpload(gid,id,category,external.image||external.avatar,external.banner||null);
-   const record=addPack(gid,{...fileInfo,id,category,title:external.title,sourceId:external.sourceId,sourceIds:external.sourceIds||[external.sourceId],sourceUrl:external.sourceUrl,sourceBannerUrl:external.sourceBannerUrl||null,license:external.license,credit:external.credit,importedAutomatically:true,categoryVerified:true,photoVerified:external.photoVerified===true,filmVerified:category==='movies',verificationSource:external.verificationSource,provider:external.provider,boysStyle:external.boysStyle,boysTheme:external.boysTheme});fetched('success');
+   const record=addPack(gid,{...fileInfo,id,category,title:external.title,sourceId:external.sourceId,sourceIds:external.sourceIds||[external.sourceId],sourceUrl:external.sourceUrl,sourceBannerUrl:external.sourceBannerUrl||null,license:external.license,credit:external.credit,importedAutomatically:true,categoryVerified:true,photoVerified:external.photoVerified===true,filmVerified:category==='movies',verificationSource:external.verificationSource,provider:external.provider,boysStyle:external.boysStyle,boysTheme:external.boysTheme});fetched('success',null,record.id);
    return `✅ أضفت صورة جديدة لقسم ${category} من ${external.provider}. (${record.id})`;
   }catch(e){if(fileInfo)await deleteCustom(fileInfo);throw e;}
  }catch(e){fetched('error',err(e));return 'تعذر الجلب: '+err(e);}
@@ -479,7 +493,7 @@ export async function startAutomation(client,{timers=globalThis}={}){
   }catch(e){console.error('Automatic image source:',err(e));}
   finally{fetching=false;}
  };
- if(process.env.AUTO_FETCH!=='false')schedule('setInterval',fetchTick,300000);
+ if(!sourcesOnly()&&process.env.AUTO_FETCH!=='false')schedule('setInterval',fetchTick,300000);
  schedule('setInterval',postTick,20000);
  schedule('setTimeout',postTick,5000);
  return {stop(){
