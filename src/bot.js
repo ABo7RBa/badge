@@ -437,13 +437,16 @@ async function buttons(i,client){
     new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('فتح البنر الأصلي').setURL(p.bannerURL));
    return i.editReply(ui('📥 افتح الصورة الأصلية لحفظها؛ روابط المصدر والمصورين في المنشور.',{components:[links]}));
   }
+  await i.deferReply(ep(''));
   // Use safe resolved paths for both custom and bundled assets.
   const {mediaPath}=await import('./db.js');
   const a=[new AttachmentBuilder(mediaPath(p.avatar),{name:p.kind==='wallpaper'?'pc-wallpaper.jpg':'avatar.jpg'})];
   if(p.kind==='profile'){
+   const card=await renderCard(p);
+   a.unshift(new AttachmentBuilder(card.buffer,{name:'profile-card.png'}));
    a.push(new AttachmentBuilder((await import('./db.js')).mediaPath(p.banner),{name:'banner.jpg'}));
   }
-  return i.reply(ep('📥 ملفات الصورة',{files:a}));
+  return i.editReply(ui(p.kind==='profile'?'📥 البطاقة كاملة + الأفتار + البنر — ملفات جاهزة للحفظ':'📥 ملف الخلفية جاهز للحفظ',{files:a}));
  }
  if(action==='edit'){
   if(!admin(i))return i.reply(ep('⛔ التعديل للمشرفين فقط'));

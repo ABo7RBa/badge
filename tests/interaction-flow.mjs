@@ -77,6 +77,20 @@ const slashPreview=interaction('command',{commandName:'معاينة',state:{embe
  options:{getChannel:()=>null,getString:name=>name==='id'?local.id:null}});
 await handleInteraction(slashPreview,bot);assert.deepEqual(slashPreview.state.embeds,[]);assert.equal(slashPreview.state.attachments.length,1);
 
+// A user can save the exact composite card as a PNG, as well as both originals.
+const download=interaction('button',{customId:'sas:download:'+local.id,memberPermissions:new PermissionsBitField()});
+await handleInteraction(download,bot);
+assert.equal(download.events[0],'deferReply');assert.equal(download.events.at(-1),'editReply');
+assert.deepEqual(download.files.map(file=>file.name),['profile-card.png','avatar.jpg','banner.jpg']);
+assert.equal(download.state.attachments.length,3);
+const cardInfo=await (await import('sharp')).default(download.files[0].data).metadata();
+assert.equal(cardInfo.format,'png');assert.equal(cardInfo.width,1080);assert.equal(cardInfo.height,700);
+assert(download.files.every(file=>file.data.length>1000));
+const wallpaper=packs('interactions','pc_wallpapers')[0];
+const wallpaperDownload=interaction('button',{customId:'sas:download:'+wallpaper.id});
+await handleInteraction(wallpaperDownload,bot);
+assert.equal(wallpaperDownload.files.length,1);assert.equal(wallpaperDownload.files[0].name,'pc-wallpaper.jpg');
+
 // Confirm deletion is acknowledged before any potentially slow REST request.
 const deletion=interaction('button',{customId:'sas:confirm:original-message'});
 const deletionClient={user:{id:'test-bot'},channels:{fetch:async()=>{
