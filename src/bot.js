@@ -83,8 +83,7 @@ export function unsplashEmbeds(record){
   `[البنر](${record.sourceBannerUrl}) • تصوير [${name(b.name)}](${b.url})\n`+
   'على [Unsplash](https://unsplash.com/?utm_source=abo7rb&utm_medium=referral)';
  return [new EmbedBuilder().setTitle(record.category==='boys'?'🖤 أفتار وبنر شباب':'🌸 أفتار وبنر بنات')
-  .setURL(record.sourceBannerUrl).setDescription(text).setImage(record.bannerURL).setThumbnail(record.avatarURL)
-  .setFooter({text:'ABO 7RB • Unsplash'})];
+  .setURL(record.sourceBannerUrl).setDescription(text).setImage(record.bannerURL).setThumbnail(record.avatarURL)];
 }
 export async function post(client,gid,cid,{forced=false}={}){
  const key=gid+':'+cid;if(busy.has(key))return 'يوجد نشر قيد التنفيذ';
@@ -112,8 +111,7 @@ export async function post(client,gid,cid,{forced=false}={}){
     if(!stillCurrent())return cancelled;
     if(chosen){
      const embed=new EmbedBuilder().setTitle(r.category==='anime'?'🎌 صورة أنمي جديدة':'🖥️ خلفية شاشة جديدة').setURL(chosen.sourceUrl)
-       .setDescription(`${chosen.width}×${chosen.height} • [عرض وتحميل من المصدر](${chosen.sourceUrl})`)
-       .setFooter({text:'ABO 7RB • Wallhaven (رابط المصدر؛ الحقوق لأصحابها)'});
+       .setDescription(`${chosen.width}×${chosen.height} • [عرض وتحميل من المصدر](${chosen.sourceUrl})`);
      if(chosen.preview)embed.setImage(chosen.preview);
      const actions=new ActionRowBuilder().addComponents(
       new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(chosen.sourceUrl).setLabel('فتح الخلفية'),
@@ -169,8 +167,7 @@ export async function post(client,gid,cid,{forced=false}={}){
   const output=await renderCard(picked);
   if(!stillCurrent())return cancelled;
   const credit=new EmbedBuilder()
-    .setImage(`attachment://${output.filename}`)
-    .setFooter({text:'ABO 7RB • '+(picked.provider||'صور من مكتبة القسم')});
+    .setImage(`attachment://${output.filename}`);
   if(picked.sourceUrl&&picked.sourceIds?.length) {
    const creditText=String(picked.credit||'').replace(/[\[\]()*_`]/g,'').slice(0,180);
    const links=[`[مصدر الأفتار](${picked.sourceUrl})`,picked.sourceBannerUrl?`[مصدر البنر](${picked.sourceBannerUrl})`:null].filter(Boolean).join(' • ');
