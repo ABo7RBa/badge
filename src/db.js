@@ -13,7 +13,17 @@ export const DEFAULT_CATEGORIES=Object.freeze({
 export const ALLOWED_CATEGORIES=new Set(Object.keys(DEFAULT_CATEGORIES));
 const seed=JSON.parse(fs.readFileSync(path.join(ROOT,'assets/seed.json'),'utf8')).filter(p=>ALLOWED_CATEGORIES.has(p.category));
 export function loadStore(file=STORE_FILE){
- try {const s=JSON.parse(fs.readFileSync(file,'utf8'));if(!s||typeof s.guilds!=='object'||Array.isArray(s.guilds))throw Error('ملف غير صحيح');return s;}
+ try {const s=JSON.parse(fs.readFileSync(file,'utf8'));
+  if(!s||!s.guilds||typeof s.guilds!=='object'||Array.isArray(s.guilds))throw Error('ملف غير صحيح');
+  for(const g of Object.values(s.guilds)){
+   if(!g||typeof g!=='object'||Array.isArray(g))throw Error('بيانات السيرفر غير صحيحة');
+   if(g.packs!=null&&!Array.isArray(g.packs))throw Error('قائمة الصور غير صحيحة');
+   if((g.packs||[]).some(p=>!p||typeof p!=='object'||Array.isArray(p)))throw Error('بيانات صورة محفوظة غير صحيحة');
+   for(const key of ['rooms','categories','sources','fetchAt','fetchStatus','titleOverrides','migrations'])
+    if(g[key]!=null&&(typeof g[key]!=='object'||Array.isArray(g[key])))throw Error('إعدادات السيرفر غير صحيحة');
+   if(Object.values(g.rooms||{}).some(room=>!room||typeof room!=='object'||Array.isArray(room)))throw Error('بيانات روم محفوظ غير صحيحة');
+  }
+  return s;}
  catch(e){if(e.code==='ENOENT')return {version:9,guilds:{}};throw Error('تعذر قراءة بيانات البوت، لا تحذف الملف! '+e.message);}
 }
 export function saveStore(s,file=STORE_FILE){
@@ -27,8 +37,8 @@ export function guild(gid,s=store){
  // Fixed categories: ignore any legacy or user-created extra categories.
  g.categories={...DEFAULT_CATEGORIES};
  g.rooms??={};g.packs??=[];g.titleOverrides??={};g.fetchAt??={};g.sources??={};
- for(const room of Object.values(g.rooms)){if(!Array.isArray(room.usedIds))room.usedIds=room.lastId?[room.lastId]:[];}
  for(const [cid,room] of Object.entries(g.rooms))if(!ALLOWED_CATEGORIES.has(room?.category))delete g.rooms[cid];
+ for(const room of Object.values(g.rooms)){if(!Array.isArray(room.usedIds))room.usedIds=room.lastId?[room.lastId]:[];}
  for(const [cid,category] of Object.entries(g.sources))if(!ALLOWED_CATEGORIES.has(category))delete g.sources[cid];
  return g;
 }
@@ -128,6 +138,14 @@ export function migrateLegacySettings(legacyPath=STORE_FILE,s=store){
  let changed=false;
  for(const g of Object.values(s.guilds||{})){
   g.categories??={};g.packs??=[];g.titleOverrides??={};g.rooms??={};g.fetchAt??={};g.sources??={};
+  // Older versions used a film-wide source ID and stopped after one pair.
+  // Preserve pack IDs/history while identifying each pair by its actual images.
+  for(const p of g.packs){
+   if(p?.category==='movies'&&/^fanart:movie:tt\d{7,10}$/.test(p.sourceId||'')&&
+    Array.isArray(p.sourceIds)&&p.sourceIds.length===2&&p.sourceIds.every(id=>/^fanart:art:\d+$/.test(id))){
+    p.sourceId=[p.sourceId,...p.sourceIds].join('|');changed=true;
+   }
+  }
   if(g.migrations?.photoProvider!=='unsplash-v1'){
    for(const category of ['girls','boys']){
     g.fetchAt[category]=0;

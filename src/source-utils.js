@@ -13,17 +13,22 @@ export function requireApiKey(value, name) {
   return value.trim();
 }
 
-export async function sourceJson(url, {apiFetch = fetch, headers = {}, source} = {}) {
-  const response = await apiFetch(url.toString(), {
-    headers: {Accept: 'application/json', ...headers},
-    signal: AbortSignal.timeout(18000), redirect: 'error'
-  });
-  if (!response.ok) {
-    if ([401, 403].includes(response.status)) throw Error(`${source}: تحقق من صلاحية مفتاح API (${response.status})`);
-    if (response.status === 429) throw Error(`${source}: وصلت إلى حد الطلبات (429)، حاول لاحقًا`);
-    const error = Error(`${source} HTTP ${response.status}`);
-    error.status = response.status;
-    throw error;
+class SourceError extends Error{}
+export async function sourceJson(url, {apiFetch = fetch, headers = {}, source='المصدر'} = {}) {
+  try{
+    const response = await apiFetch(url.toString(), {
+      headers: {Accept: 'application/json', ...headers},
+      signal: AbortSignal.timeout(18000), redirect: 'error'
+    });
+    if (!response.ok) {
+      const message=[401,403].includes(response.status)?`${source}: تحقق من صلاحية مفتاح API (${response.status})`:
+        response.status===429?`${source}: وصلت إلى حد الطلبات (429)، حاول لاحقًا`:`${source} HTTP ${response.status}`;
+      const error=new SourceError(message);error.status=response.status;throw error;
+    }
+    return await response.json();
+  }catch(error){
+    if(error instanceof SourceError)throw error;
+    // Response bodies and transport errors may echo request headers or URLs.
+    throw new SourceError(`${source}: تعذر الاتصال بالمصدر أو قراءة رده؛ تحقق من الشبكة وحاول لاحقًا`);
   }
-  return response.json();
 }

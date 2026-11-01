@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import {ROOT,mediaPath,sha,kindFor} from './db.js';
-import {validatePair,visualSignature} from './quality-gate.js';
+import {validatePair,visualSignature,orientedDimensions} from './quality-gate.js';
 
 const safeSVG=x=>String(x||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const svg=s=>Buffer.from(s,'utf8');
@@ -21,7 +21,7 @@ export async function readLimited(url){
  return Buffer.concat(chunks);
 }
 export async function normalizeFromUpload(gid,recordId,category,raw,bannerRaw=null){
- const info=await sharp(raw,{limitInputPixels:40_000_000,animated:false}).rotate().metadata();
+ const info=orientedDimensions(await sharp(raw,{limitInputPixels:40_000_000,animated:false}).metadata());
  if(!info.width||!info.height)throw Error('الصورة غير صالحة');
  const dir=path.join(ROOT,'storage','packs',gid);await fs.mkdir(dir,{recursive:true});
  const wallpaper=kindFor(category)==='wallpaper';

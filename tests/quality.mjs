@@ -17,3 +17,22 @@ const result=await validatePair(av,banner);assert.ok(result.toneScore>0.6);
 assert.ok(distance(await visualSignature(av),await visualSignature(banner))>6);
 assert.ok(toneDistance([100,100,100],[110,110,110])<0.1);
 console.log('PASS: QA gate accepts distinct matching-color images and rejects duplicates, wrong dimensions');
+
+// EXIF orientation describes the displayed image, not its encoded width/height.
+const encodedPortrait=await sharp(banner).rotate(-90).jpeg({quality:95}).withMetadata({orientation:6}).toBuffer();
+assert((await sharp(encodedPortrait).metadata()).width<700);
+await validatePair(av,encodedPortrait);
+const displayedPortrait=await sharp(banner).jpeg().withMetadata({orientation:6}).toBuffer();
+await assert.rejects(validatePair(av,displayedPortrait),/منخفضة|أفقي/);
+const {normalizeFromUpload,deleteCustom}=await import('../src/media.js');
+const {ROOT,mediaPath}=await import('../src/db.js');
+const {randomUUID}=await import('node:crypto');
+const fs=await import('node:fs/promises');
+const path=await import('node:path');
+const gid='orientation-'+randomUUID();let files;
+try{
+ const wallpaper=await sharp(banner).resize(1600,900,{fit:'fill'}).rotate(-90).jpeg().withMetadata({orientation:6}).toBuffer();
+ files=await normalizeFromUpload(gid,'rotated','pc_wallpapers',wallpaper);
+ const dimensions=await sharp(mediaPath(files.avatar)).metadata();assert.equal(dimensions.width,1600);assert.equal(dimensions.height,900);
+}finally{if(files)await deleteCustom(files);await fs.rm(path.join(ROOT,'storage','packs',gid),{recursive:true,force:true});}
+console.log('PASS: EXIF-rotated banners and wallpapers use displayed dimensions and do not admit portrait banners');

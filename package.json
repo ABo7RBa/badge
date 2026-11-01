@@ -1,16 +1,17 @@
 {
   "name": "abo-7rb-complete-five-feeds",
-  "version": "16.7.1",
+  "version": "16.8.0",
   "private": true,
   "type": "module",
   "description": "Arabic Discord bot: Unsplash hotlinked photo pairs, Wallhaven anime/PC previews, Fanart.tv film artwork",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "check": "node --check index.js && node --check src/anime-pairs.js && node --check src/bot.js && node --check src/boys-style.js && node --check src/commands.js && node --check src/content-policy.js && node --check src/db.js && node --check src/fanart-source.js && node --check src/history.js && node --check src/image-sources.js && node --check src/library-maintenance.js && node --check src/media.js && node --check src/member-source.js && node --check src/unsplash-source.js && node --check src/unsplash-record.js && node --check src/quality-gate.js && node --check src/source-utils.js && node --check src/wallhaven-source.js && node --check src/wallpaper-links.js",
-    "test": "node tests/core.mjs && node tests/category-policy.mjs && node tests/library-dedup.mjs && node tests/boys-style.mjs && node tests/unsplash-source.mjs && node tests/unsplash-record.mjs && node tests/image-sources.mjs && node tests/wallpaper-links.mjs && node tests/fork-v9.mjs && node tests/repetition.mjs && node tests/quality.mjs && node tests/media-integrity.mjs && node tests/wallhaven-source.mjs && node tests/source-flow.mjs && node tests/automation-flow.mjs && node tests/interaction-flow.mjs && node tests/post-cancellation.mjs && node tests/fanart-retries.mjs && node tests/anime-pairs.mjs && node tests/source-only.mjs",
+    "check": "node --check index.js && node --check src/anime-pairs.js && node --check src/bot.js && node --check src/boys-style.js && node --check src/commands.js && node --check src/content-policy.js && node --check src/db.js && node --check src/fanart-source.js && node --check src/history.js && node --check src/image-sources.js && node --check src/library-maintenance.js && node --check src/media.js && node --check src/member-source.js && node --check src/unsplash-source.js && node --check src/unsplash-record.js && node --check src/quality-gate.js && node --check src/source-utils.js && node --check src/wallhaven-source.js && node --check src/wallpaper-links.js && node --check tools/check-config.mjs",
+    "test": "node tests/core.mjs && node tests/category-policy.mjs && node tests/library-dedup.mjs && node tests/boys-style.mjs && node tests/unsplash-source.mjs && node tests/unsplash-record.mjs && node tests/image-sources.mjs && node tests/wallpaper-links.mjs && node tests/fork-v9.mjs && node tests/repetition.mjs && node tests/quality.mjs && node tests/media-integrity.mjs && node tests/wallhaven-source.mjs && node tests/source-flow.mjs && node tests/automation-flow.mjs && node tests/interaction-flow.mjs && node tests/post-cancellation.mjs && node tests/fanart-retries.mjs && node tests/anime-pairs.mjs && node tests/source-only.mjs && node tests/movie-catalogue.mjs && node tests/storage-validation.mjs && node tests/startup-config.mjs && node tests/source-http.mjs",
     "test:static": "node tests/core.mjs && node tests/category-policy.mjs && node tests/library-dedup.mjs && node tests/boys-style.mjs && node tests/unsplash-source.mjs && node tests/unsplash-record.mjs && node tests/image-sources.mjs && node tests/wallpaper-links.mjs && node tests/fork-v9.mjs && node tests/repetition.mjs && node tests/wallhaven-source.mjs",
-    "audit-library": "node tools/library-audit.mjs"
+    "audit-library": "node tools/library-audit.mjs",
+    "doctor": "node tools/check-config.mjs"
   },
   "engines": {
     "node": ">=22.12.0"

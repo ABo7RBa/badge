@@ -21,8 +21,12 @@ export async function colorTone(input){
  return [rs/n,gs/n,bs/n];
 }
 export function toneDistance(a,b){return Math.hypot(...a.map((v,i)=>v-b[i]))/Math.sqrt(3*255*255);}
+export function orientedDimensions(info){
+ const swap=[5,6,7,8].includes(info.orientation);
+ return {width:swap?info.height:info.width,height:swap?info.width:info.height};
+}
 export async function validatePair(avatar,banner,{minAvatar=320,minBanner=700,maxToneDistance=0.40}={}){
- const [am,bm]=await Promise.all([sharp(avatar).metadata(),sharp(banner).metadata()]);
+ const [am,bm]=(await Promise.all([sharp(avatar).metadata(),sharp(banner).metadata()])).map(orientedDimensions);
  if(!am.width||!am.height||!bm.width||!bm.height)throw Error('صور غير صالحة');
  if(Math.min(am.width,am.height)<minAvatar)throw Error('دقة الأفتار منخفضة');
  if(bm.width<minBanner||bm.height<250)throw Error('دقة البنر منخفضة');

@@ -37,7 +37,7 @@ const recovered=await fetchFanartMovie(new Set(),{...base,imageFetch:async url=>
  recoveryCalls.set(url,(recoveryCalls.get(url)||0)+1);
  if(url===art(1,'poster').url)throw Error('missing image');return Buffer.from(url);
 }});
-assert.equal(recovered.sourceId,'fanart:movie:tt1375666');assert(recovered.avatar.toString().includes('poster-2'));
+assert.equal(recovered.sourceId,'fanart:movie:tt1375666|fanart:art:2|fanart:art:4');assert(recovered.avatar.toString().includes('poster-2'));
 assert([...recoveryCalls.values()].every(count=>count===1));
 
 // Download success with QA rejection is a genuine unsuitable-artwork result.
@@ -60,7 +60,7 @@ const secondFilm=await fetchFanartMovie(new Set(),{...base,ids:['tt1375666','tt0
   if(url.includes('/27205/')&&url.includes('poster-'))throw Error('first film posters removed');
   return Buffer.from(url);
  }});
-assert.equal(secondFilm.sourceId,'fanart:movie:tt0816692');
+assert.equal(secondFilm.sourceId,'fanart:movie:tt0816692|fanart:art:1|fanart:art:4');
 for(const json of [null,{}, {...film(),movieposter:[]},{...film(),moviebackground:[]}]){
  assert.equal(await fetchFanartMovie(new Set(),{...base,apiFetch:async()=>({ok:true,json:async()=>json}),
   imageFetch:async()=>{assert.fail('no usable metadata means no image fetch');}}),null);

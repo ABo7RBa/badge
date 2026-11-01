@@ -48,7 +48,7 @@ const filmOptions={apiKey:'test-key',imageFetch:async url=>Buffer.from(url),vali
   assert.equal(opts.headers['api-key'],'test-key');return {ok:true,json:async()=>movie};
 }};
 const film=await fetchCategoryAssets('movies',new Set(),filmOptions);
-assert.equal(film.sourceId,'fanart:movie:tt1375666');assert.equal(film.category,'movies');
+assert.equal(film.sourceId,'fanart:movie:tt1375666|fanart:art:1|fanart:art:2');assert.equal(film.category,'movies');
 assert.equal(film.filmVerified,true);assert(film.sourceUrl.includes('tt1375666'));
 assert(film.avatar.toString().includes('movieposter'));assert(film.banner.toString().includes('moviebackground'));
 assert.equal(await fetchFanartMovie(new Set([film.sourceId]),filmOptions),null);
@@ -62,7 +62,7 @@ await assert.rejects(fetchFanartMovie(new Set(),{...filmOptions,apiFetch:async()
 assert.equal(await fetchFanartMovie(new Set(),{...filmOptions,apiFetch:async()=>({ok:false,status:404})}),null);
 const fallbackFilm=await fetchFanartMovie(new Set(),{...filmOptions,ids:['tt0816692','tt1375666'],
  apiFetch:async url=>new URL(url).pathname.endsWith('tt0816692')?{ok:false,status:404}:{ok:true,json:async()=>movie}});
-assert.equal(fallbackFilm.sourceId,'fanart:movie:tt1375666');
+assert.equal(fallbackFilm.sourceId,'fanart:movie:tt1375666|fanart:art:1|fanart:art:2');
 
 const wallhaven=cat=>({id:'a1b2c3',url:'https://wallhaven.cc/w/a1b2c3',category:cat,purity:'sfw',
  dimension_x:2560,dimension_y:1440,thumbs:{large:'https://th.wallhaven.cc/lg/a1/a1b2c3.jpg'}});

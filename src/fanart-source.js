@@ -38,6 +38,7 @@ export async function fetchFanartMovie(seen = new Set(), {
   apiFetch = fetch, imageFetch = readLimited, validate = validatePair
 } = {}) {
   const key = requireApiKey(apiKey, 'FANART_API_KEY');
+  seen=new Set([...seen].flatMap(value=>[value,...String(value).split('|').filter(id=>/^fanart:art:\d+$/.test(id))]));
   const pending = filmIds(ids.join(',')).filter(id => !seen.has(`fanart:movie:${id}`));
   let downloadFailed=false,downloadedPair=false;
   for (let n = 0; n < Math.min(5, pending.length); n++) {
@@ -51,8 +52,9 @@ export async function fetchFanartMovie(seen = new Set(), {
     }
     if (json?.imdb_id !== id || typeof json.name !== 'string' || !json.name.trim()) continue;
     const normalize=items=>(Array.isArray(items)?items:[]).filter(validArtwork).map(item=>({...item,url:artworkUrl(item.url)}));
-    const posters = normalize(json.movieposter);
-    const backgrounds = normalize(json.moviebackground);
+    const unused=item=>!seen.has(`fanart:art:${item.id}`);
+    const posters = normalize(json.movieposter).filter(unused);
+    const backgrounds = normalize(json.moviebackground).filter(unused);
     const pairs=[];
     for (const poster of posters.slice(0, 3)) for (const background of backgrounds.slice(0, 3)) {
       const sourceIds = [`fanart:art:${poster.id}`, `fanart:art:${background.id}`];
@@ -87,7 +89,7 @@ export async function fetchFanartMovie(seen = new Set(), {
         const avatar=outcomes.get(poster.url).value,banner=outcomes.get(background.url).value;
         await validate(avatar, banner, {minAvatar: 300, minBanner: 800, maxToneDistance: 0.4});
         return {avatar, banner, category: 'movies', title: json.name, filmTitle: json.name,
-          sourceId: `fanart:movie:${id}`, sourceIds, sourceUrl: `https://www.imdb.com/title/${id}/`,
+          sourceId: [`fanart:movie:${id}`,...sourceIds].join('|'), sourceIds, sourceUrl: `https://www.imdb.com/title/${id}/`,
           sourceBannerUrl: 'https://fanart.tv/', credit: 'Film artwork via Fanart.tv — rights belong to their owners',
           license: 'Fanart.tv API terms; film artwork remains copyrighted',
           filmVerified: true, verificationSource: 'fanart-movie', provider: 'Fanart.tv'};
