@@ -1,4 +1,4 @@
-# V16.10 image sources
+# V16.11 image sources
 
 | Category | Provider | Integration |
 | --- | --- | --- |

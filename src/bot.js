@@ -9,6 +9,7 @@ import {isUnsplashRecord} from './unsplash-record.js';
 import {collectRecentPostIds,reconcileRoom} from './history.js';
 import {pcCollectionsMessage,validatePcWallpaperRoom} from './wallpaper-links.js';
 import {randomUUID} from 'node:crypto';
+import {imageActionButton,setupImageButtonEmojis} from './button-icons.js';
 // Optional attribution display; image-only messages are the requested default.
 const showImageCredits=()=>process.env.SHOW_IMAGE_CREDITS==='true';
 const EVERY=60_000;const busy=new Set();const processingFetch=new Map();
@@ -24,12 +25,10 @@ const ui=(content,extra={})=>({content,embeds:[],attachments:[],allowedMentions:
 const admin=i=>i.memberPermissions?.has(PermissionFlagsBits.ManageGuild)||false;
 const mod=i=>i.memberPermissions?.has(PermissionFlagsBits.ManageMessages)||admin(i);
 const err=e=>String(e?.message||e||'خطأ').slice(0,280);
-const icon=(id,uni,customId)=>{const b=new ButtonBuilder().setCustomId(id).setStyle(ButtonStyle.Secondary);
- b.setEmoji(customId&&/^\d{17,21}$/.test(customId)?{id:customId}:uni);return b;};
 const rowFor=(id,bannerKey=null)=>new ActionRowBuilder().addComponents(
- icon(`sas:download:${id}${bannerKey?':'+bannerKey:''}`,'⬇️',process.env.DOWNLOAD_EMOJI_ID),
- icon(`sas:edit:${id}${bannerKey?':'+bannerKey:''}`,'✏️',process.env.EDIT_EMOJI_ID),
- icon(`sas:delete:${id}${bannerKey?':'+bannerKey:''}`,'🗑️',process.env.DELETE_EMOJI_ID));
+ imageActionButton('download',`sas:download:${id}${bannerKey?':'+bannerKey:''}`),
+ imageActionButton('edit',`sas:edit:${id}${bannerKey?':'+bannerKey:''}`),
+ imageActionButton('delete',`sas:delete:${id}${bannerKey?':'+bannerKey:''}`));
 const panel=()=>new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('sas:menu').setPlaceholder('اختر أمرًا من القائمة').addOptions(ACTIONS.map(([value,label,description])=>({value,label,description}))));
 const HOME=()=>ep('**✦ ABO 7RB**\nاختر أمرًا من القائمة:',{components:[panel()]});
 const chanRow=action=>new ActionRowBuilder().addComponents(new ChannelSelectMenuBuilder().setCustomId(`sas:channel:${action}`).addChannelTypes(ChannelType.GuildText).setPlaceholder('اختر الروم'));
@@ -112,7 +111,7 @@ export async function post(client,gid,cid,{forced=false}={}){
      if(chosen.preview)embed.setImage(chosen.preview);
      const actions=new ActionRowBuilder().addComponents(
       new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(chosen.sourceUrl).setLabel('فتح الخلفية'),
-      icon(`sas:delete:wh_${chosen.rawId}`,'🗑️',process.env.DELETE_EMOJI_ID));
+      imageActionButton('delete',`sas:delete:wh_${chosen.rawId}`));
      await channel.send({embeds:[embed],components:[actions],allowedMentions:{parse:[]}});
      r.wallhavenUsedIds??=[];r.wallhavenUsedIds.push(chosen.id);
      r.count=(r.count||0)+1;r.lastPostAt=Date.now();r.lastId=chosen.id;
@@ -452,6 +451,9 @@ export async function start(token){
  migrateLegacySettings();
  client.once(Events.ClientReady,async c=>{
   console.log('✅ Logged in as '+c.user.tag);
+  const buttonIcons=await setupImageButtonEmojis(c);
+  if(buttonIcons.failed.length)console.warn('⚠️ تعذر تجهيز بعض أيقونات الأزرار؛ تُستخدم رموز بديلة:',buttonIcons.failed.join(', '));
+  else console.log('✅ أيقونات الأزرار جاهزة');
   try{
    const rest=new REST({version:'10'}).setToken(token);
    const target=process.env.GUILD_ID?.trim();

@@ -24,10 +24,23 @@ try {
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {importImages,post} from './src/bot.js';
+import {setupImageButtonEmojis,imageActionButton} from './src/button-icons.js';
+import {Collection,ButtonStyle} from 'discord.js';
 import {guild,packs,makeRoom} from './src/db.js';
 process.env.UNSPLASH_ACCESS_KEY='test-key';process.env.FANART_API_KEY='test-key';
 process.env.FANART_MOVIE_IDS='tt1375666';process.env.WALLHAVEN_ENABLED='true';
 const av=await fs.readFile('avatar.png'),bn=await fs.readFile('banner.png');
+for(const key of ['DOWNLOAD_EMOJI_ID','EDIT_EMOJI_ID','DELETE_EMOJI_ID'])delete process.env[key];
+const registered=new Collection(),iconImages=[];
+const emojis={fetch:async()=>registered,create:async({name,attachment})=>{
+ const meta=await (await import('sharp')).default(attachment).metadata();
+ assert.equal(meta.width,128);assert.equal(meta.height,128);assert(meta.hasAlpha);
+ const emoji={name,id:String(123456789012345678n+BigInt(registered.size))};registered.set(emoji.id,emoji);iconImages.push(attachment);return emoji;
+}};
+assert.equal((await setupImageButtonEmojis({application:{emojis}})).created,3);
+assert.equal((await setupImageButtonEmojis({application:{emojis}})).reused,3,'restart must reuse the existing icons');
+assert.equal(iconImages.length,3);
+const expectedIconIds=[...registered.keys()];
 const requested=[];
 function photo(id,label,landscape){return {id,width:landscape?1600:800,height:landscape?900:1000,
  alt_description:label,description:label,color:'#333333',tags:label.split(',').map(title=>({title:title.trim()})),
@@ -76,6 +89,14 @@ for(const category of ['girls','boys','movies','anime','pc_wallpapers']){
  assert.equal(messages.length,1,posted);assert.equal(room.count,1);
  const embed=messages[0].embeds[0].toJSON();
  for(const field of ['title','description','footer'])assert.equal(embed[field],undefined,'image-only post');
+ const buttons=messages[0].components[0].toJSON().components;
+ if(category!=='pc_wallpapers'){
+  assert.equal(buttons.length,3);
+  for(const [index,action] of ['download','edit','delete'].entries()){
+   assert.equal(buttons[index].style,ButtonStyle.Secondary);assert.equal(buttons[index].label,undefined);
+   assert.equal(buttons[index].emoji.id,expectedIconIds[index]);assert(buttons[index].custom_id.startsWith('sas:'+action+':'));
+  }
+ }else assert.equal(buttons[1].emoji.id,expectedIconIds[2]);
  const imported=packs(gid,category)[0];
  if(category==='pc_wallpapers'){
   assert.equal(embed.url,undefined);assert(embed.image.url.includes('th.wallhaven.cc'));assert(!messages[0].files);
@@ -95,7 +116,17 @@ for(const category of ['girls','boys','movies','anime','pc_wallpapers']){
   assert.equal(requested.filter(u=>u.pathname.endsWith('/download')).length,tracksBefore+2);
  }
 }
-console.log('PASS: five source routes, remote Unsplash hotlinks/attribution/selection tracking, local Fanart rendering, and saved publish state');
+// Optional icon overrides and an unavailable emoji API must not break buttons.
+process.env.DOWNLOAD_EMOJI_ID='987654321098765432';
+assert.equal(imageActionButton('download','sas:download:override').toJSON().emoji.id,process.env.DOWNLOAD_EMOJI_ID);
+delete process.env.DOWNLOAD_EMOJI_ID;
+const unavailable=await setupImageButtonEmojis({application:{emojis:{fetch:async()=>{throw Error('test API unavailable');}}}});
+assert.equal(unavailable.failed.length,3);
+for(const action of ['download','edit','delete']){
+ const fallback=imageActionButton(action,'sas:'+action+':fallback').toJSON();
+ assert.equal(fallback.style,ButtonStyle.Secondary);assert(fallback.label);assert.equal(fallback.emoji,undefined);
+}
+console.log('PASS: monochrome application icons, reuse, override/fallback and five source routes, remote Unsplash hotlinks/attribution/selection tracking, local Fanart rendering, and saved publish state');
 `});
  process.stdout.write(output);assert(output.includes('PASS:'));
 } finally {await fs.rm(tmp,{recursive:true,force:true});}
