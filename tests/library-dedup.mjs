@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import {samePhoto, nearPictureHash, packs, guild, addPack} from '../src/db.js';
+const state={version:13,guilds:{}}; const gid='audit-dedup';guild(gid,state);
+const real=packs(gid,'girls',state)[0];
+assert(real);
+assert(nearPictureHash('abcdef0123456789','abcdef0123456789'));
+assert(nearPictureHash('abcdef0123456789','abcdef0123456788'));
+assert(!nearPictureHash('0000000000000000','ffffffffffffffff'));
+const clone={...real,id:'duplicated-pair-1',sourceId:'fake:duplicate',visualHash:'f'.repeat(64),bannerVisualHash:'e'.repeat(64),reviewedWithV86:true};
+state.guilds[gid].packs.push(clone);
+assert(!packs(gid).some(p=>p.id===clone.id),'a visually duplicated pair must not be publishable');
+const crossed={...real,id:'cross-category',category:'boys',kind:'profile',reviewedWithV86:true};
+state.guilds[gid].packs.push(crossed);
+assert(!packs(gid,'boys',state).some(p=>p.id===crossed.id),'same image must not cross into another category');
+const forged={...real,id:'forged',visualHash:'a'.repeat(64),bannerVisualHash:'b'.repeat(64),avatarDHash:real.avatarDHash,
+ bannerDHash:real.bannerDHash,categoryVerified:true,photoVerified:true,verificationSource:'moderator-photo'};
+assert.throws(()=>addPack(gid,forged,state),/البنر موجود|الأفتار أو البنر/);
+const crossRole={visualHash:real.bannerVisualHash,bannerVisualHash:'a'.repeat(64),avatarDHash:real.bannerDHash,bannerDHash:'0123456789abcdef'};
+assert(samePhoto(real,crossRole),'a banner recycled as an avatar must be rejected');
+const example={...real};
+assert(samePhoto(real,example));
+console.log('PASS: separate avatar and banner fingerprints; resized duplicate detection; cross-category isolation; cross-role reuse blocked');

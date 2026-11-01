@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {PC_COLLECTION_LINKS,pcCollectionsMessage,validatePcWallpaperRoom} from '../src/wallpaper-links.js';
+assert.equal(PC_COLLECTION_LINKS.length,4);
+assert.equal(new Set(PC_COLLECTION_LINKS.map(x=>x.url)).size,PC_COLLECTION_LINKS.length);
+assert(PC_COLLECTION_LINKS.every(x=>x.url.startsWith('https://4kwallpapers.com/') && x.url.endsWith('/')));
+assert(PC_COLLECTION_LINKS.every(x=>!x.url.includes('.jpg')&&!x.url.includes('.png')));
+assert(pcCollectionsMessage().includes('https://4kwallpapers.com/collections-packs/'));
+assert.equal(validatePcWallpaperRoom({category:'pc_wallpapers'}),true);
+assert.throws(()=>validatePcWallpaperRoom({category:'anime'}));
+assert.throws(()=>validatePcWallpaperRoom({category:'girls'}));
+assert.throws(()=>validatePcWallpaperRoom({category:'movies'}));
+assert.throws(()=>validatePcWallpaperRoom({category:'boys'}));
+assert.throws(()=>validatePcWallpaperRoom(null));
+console.log('PASS: only HTML links, PC-only access, no image scraping');
