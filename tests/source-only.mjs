@@ -71,8 +71,8 @@ for(const category of ['girls','boys','movies','anime','pc_wallpapers'])for(cons
   assert.equal(messages.length,1,room.error);assert.equal(room.count,1);
   if(['girls','boys'].includes(category))assert(messages[0].embeds[0].toJSON().image.url.includes('fresh'));
   if(category==='movies'){assert(requests.some(u=>u.hostname==='assets.fanart.tv'));assert.notEqual(room.lastId,'old-manual');}
-  if(category==='pc_wallpapers')assert(messages[0].embeds[0].toJSON().url.includes('wallhaven.cc'));
-  if(category==='anime'){assert(messages[0].files[0].attachment.length>1000);assert(messages[0].embeds[0].toJSON().description.includes('مصدر البنر'));assert.equal(requests.filter(u=>u.hostname==='w.wallhaven.cc').length,2);}
+  if(category==='pc_wallpapers')assert(messages[0].embeds[0].toJSON().image.url.includes('th.wallhaven.cc'));
+  if(category==='anime'){assert(messages[0].files[0].attachment.length>1000);assert.equal(messages[0].embeds[0].toJSON().description,undefined);assert.equal(requests.filter(u=>u.hostname==='w.wallhaven.cc').length,2);}
  }else{assert.equal(messages.length,0,'never send local/source-library fallback on '+category+' '+outcome);assert.equal(room.count,0);assert(room.error);}
 }
 // Disabling a required source must not silently enable local publishing.

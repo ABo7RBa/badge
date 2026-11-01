@@ -75,19 +75,20 @@ for(const category of ['girls','boys','movies','anime','pc_wallpapers']){
  const posted=await post(client,gid,'room',{forced:true});
  assert.equal(messages.length,1,posted);assert.equal(room.count,1);
  const embed=messages[0].embeds[0].toJSON();
+ for(const field of ['title','description','footer'])assert.equal(embed[field],undefined,'image-only post');
  const imported=packs(gid,category)[0];
  if(category==='pc_wallpapers'){
-  assert.equal(embed.url,'https://wallhaven.cc/w/d4e5f6');assert(!messages[0].files);
+  assert.equal(embed.url,undefined);assert(embed.image.url.includes('th.wallhaven.cc'));assert(!messages[0].files);
   assert.deepEqual(room.wallhavenUsedIds,['wallhaven:d4e5f6']);
  }else if(category==='movies'||category==='anime'){
-  assert(messages[0].files[0].attachment.length>1000);assert(embed.description.includes(category==='movies'?'Fanart.tv':'مصدر البنر'));
+  assert(messages[0].files[0].attachment.length>1000);assert.equal(embed.description,undefined);
   const again=await importImages(gid,category,true);assert(!again.startsWith('✅'),again);
  }else{
   assert(imported.remote);assert(!messages[0].files,'remote pairs must not be rehosted as attachments');
   assert.equal(embed.image.url,imported.bannerURL);assert.equal(embed.thumbnail.url,imported.avatarURL);
   assert(embed.image.url.includes('ixid=original-'));assert(embed.thumbnail.url.includes('ixid=original-'));
-  assert(embed.description.includes('Unsplash'));assert(embed.description.includes('Flow Test Artist'));
-  assert(embed.description.includes('unsplash.com/@flowartist'));
+  assert.equal(embed.description,undefined);assert.equal(embed.title,undefined);
+  assert.equal(imported.credits.avatar.name,'Flow Test Artist');
   assert.equal(requested.filter(u=>u.pathname.endsWith('/download')).length,tracksBefore+2);
   assert.equal(requested.some(u=>u.hostname==='images.unsplash.com'),false);
   const again=await importImages(gid,category,true);assert(!again.startsWith('✅'),again);

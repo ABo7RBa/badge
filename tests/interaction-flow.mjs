@@ -93,15 +93,30 @@ const slashPreview=interaction('command',{commandName:'معاينة',state:{embe
  options:{getChannel:()=>null,getString:name=>name==='category'?'boys':null}});
 await handleInteraction(slashPreview,bot);assert.equal(slashPreview.state.embeds.length,1);assert.deepEqual(slashPreview.state.attachments,[]);
 
-// A user can save the exact composite card as a PNG, as well as both originals.
+// A download must show exactly one full card, not a three-image Discord gallery.
 const download=interaction('button',{customId:'sas:download:'+local.id,memberPermissions:new PermissionsBitField()});
 await handleInteraction(download,bot);
 assert.equal(download.events[0],'deferReply');assert.equal(download.events.at(-1),'editReply');
-assert.deepEqual(download.files.map(file=>file.name),['profile-card.png','avatar.jpg','banner.jpg']);
-assert.equal(download.state.attachments.length,3);
+assert.deepEqual(download.files.map(file=>file.name),['profile-card.png']);
+assert.equal(download.state.attachments.length,1);
+assert.equal(download.state.content,'');assert.deepEqual(download.state.embeds,[]);assert.deepEqual(download.state.components,[]);
 const cardInfo=await (await import('sharp')).default(download.files[0].data).metadata();
 assert.equal(cardInfo.format,'png');assert.equal(cardInfo.width,1080);assert.equal(cardInfo.height,700);
 assert(download.files.every(file=>file.data.length>1000));
+// Unsplash downloads remain source-hosted images, without captions or link text.
+process.env.UNSPLASH_ACCESS_KEY='test-download-key';let tracks=0;
+globalThis.fetch=async raw=>{
+ const u=new URL(raw);assert.equal(u.hostname,'api.unsplash.com');assert(u.pathname.endsWith('/download'));tracks++;
+ return Response.json({url:'https://images.unsplash.com/photo-original'});
+};
+const remoteDownload=interaction('button',{customId:'sas:download:'+remote.id});
+await handleInteraction(remoteDownload,bot);
+assert.equal(tracks,2);assert.equal(remoteDownload.events[0],'deferReply');
+assert.equal(remoteDownload.state.content,'');assert.equal(remoteDownload.state.embeds.length,1);
+assert.equal(remoteDownload.state.embeds[0].image.url,remote.bannerURL);
+assert.equal(remoteDownload.state.embeds[0].thumbnail.url,remote.avatarURL);
+assert.equal(remoteDownload.state.embeds[0].description,undefined);assert.equal(remoteDownload.state.embeds[0].title,undefined);
+assert.deepEqual(remoteDownload.state.components,[]);assert.equal(remoteDownload.files.length,0);
 // Confirm deletion is acknowledged before any potentially slow REST request.
 const deletion=interaction('button',{customId:'sas:confirm:original-message'});
 const deletionClient={user:{id:'test-bot'},channels:{fetch:async()=>{

@@ -16,6 +16,7 @@ const pair=(a='avatar01',b='banner01')=>({
   banner:{name:'Banner Artist',url:'https://unsplash.com/@bannerartist?utm_source=abo7rb&utm_medium=referral'}},
  downloadLocations:[`https://api.unsplash.com/photos/${a}/download?ixid=retain`,`https://api.unsplash.com/photos/${b}/download?ixid=retain`]
 });
+delete process.env.SHOW_IMAGE_CREDITS;
 const valid=pair();assert(isUnsplashRecord(valid));
 for(const patch of [
  {provider:'another'}, {category:'movies'}, {remote:false}, {sourceIds:['unsplash:avatar01']},
@@ -38,7 +39,12 @@ assert(samePhoto(valid,pair('banner01','avatar02')),'photo IDs cannot be recycle
 assert.throws(()=>addPack('remote-tests',pair('banner01','avatar02'),state),/موجود/);
 const rendered=unsplashEmbeds(imported)[0].toJSON();
 assert.equal(rendered.image.url,valid.bannerURL);assert.equal(rendered.thumbnail.url,valid.avatarURL);
-assert(rendered.description.includes('Avatar Artist'));assert(rendered.description.includes('Banner Artist'));
-assert(rendered.description.includes('utm_source=abo7rb'));assert(rendered.description.includes('https://unsplash.com/?'));
+assert.equal(rendered.title,undefined);assert.equal(rendered.description,undefined);assert.equal(rendered.footer,undefined);
+assert.equal(rendered.url,undefined);assert.equal(imported.credits.avatar.name,'Avatar Artist','metadata remains available');
+process.env.SHOW_IMAGE_CREDITS='true';
+const attributed=unsplashEmbeds(imported)[0].toJSON();
+assert(attributed.description.includes('Avatar Artist'));assert(attributed.description.includes('Banner Artist'));
+assert(attributed.description.includes('https://unsplash.com/?'));
+delete process.env.SHOW_IMAGE_CREDITS;
 await deleteCustom(imported); // Removing remote metadata must never try to unlink absent local files.
 console.log('PASS: saved Unsplash records validate remote origins/IDs, persist without image files, preserve attribution and reject duplicate assets');

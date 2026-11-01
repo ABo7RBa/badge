@@ -118,18 +118,19 @@ for(const [category,item] of Object.entries(active)){
  const sent=messages.filter(x=>x.cid===item.cid);assert.equal(sent.length,1,category+': '+item.room.error);
  assert.equal(item.room.count,1);assert(item.room.nextAt>now);
  const embed=sent[0].payload.embeds[0].toJSON();
+ for(const field of ['title','description','footer'])assert.equal(embed[field],undefined,'automatic posts have no visible captions');
  if(category==='pc_wallpapers'){
-  assert(embed.url.startsWith('https://wallhaven.cc/w/'));assert(embed.image.url.includes('th.wallhaven.cc'));
+  assert.equal(embed.url,undefined);assert(embed.image.url.includes('th.wallhaven.cc'));
   assert.equal(item.room.wallhavenUsedIds.length,1);
  }else if(category==='movies'||category==='anime'){
-  assert(sent[0].payload.files[0].attachment.length>1000);assert(embed.description.includes(category==='movies'?'Fanart.tv':'مصدر البنر'));
+  assert(sent[0].payload.files[0].attachment.length>1000);assert.equal(embed.description,undefined);
   assert.equal(item.g.fetchStatus[category].state,'success');
  }else{
   assert(!sent[0].payload.files,'Unsplash pairs must remain hotlinked');
   assert(embed.image.url.startsWith('https://images.unsplash.com/photo-'));
   assert(embed.thumbnail.url.startsWith('https://images.unsplash.com/photo-'));
-  assert(embed.image.url.includes('ixid=original-'));assert(embed.description.includes('Unsplash'));
-  assert(embed.description.includes('Automation Test Artist'));assert(embed.description.includes('unsplash.com/@automationartist'));
+  assert(embed.image.url.includes('ixid=original-'));assert.equal(embed.description,undefined);assert.equal(embed.title,undefined);
+  assert.equal(item.g.packs[0].credits.avatar.name,'Automation Test Artist');
   assert.equal(item.g.fetchStatus[category].state,'success');
  }
 }

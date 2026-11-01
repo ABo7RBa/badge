@@ -9,6 +9,8 @@ import {isUnsplashRecord} from './unsplash-record.js';
 import {collectRecentPostIds,reconcileRoom} from './history.js';
 import {pcCollectionsMessage,validatePcWallpaperRoom} from './wallpaper-links.js';
 import {randomUUID} from 'node:crypto';
+// Optional attribution display; image-only messages are the requested default.
+const showImageCredits=()=>process.env.SHOW_IMAGE_CREDITS==='true';
 const EVERY=60_000;const busy=new Set();const processingFetch=new Map();
 const sourceQueue=new Map();
 async function withSourceLock(key,operation){
@@ -70,13 +72,16 @@ async function recoverPreviousPosts(client){
 function categoryText(gid){return Object.entries(guild(gid).categories).map(([key,title])=>`• ${title} — ${key==='movies'?'Fanart.tv':['girls','boys'].includes(key)?'Unsplash':'Wallhaven'}`).join('\n');}
 export function unsplashEmbeds(record){
  if(!isUnsplashRecord(record))throw Error('بيانات صور Unsplash غير صالحة');
- const name=value=>String(value).replace(/[\[\]()*_`<>]/g,'').slice(0,90);
- const a=record.credits.avatar,b=record.credits.banner;
- const text=`[الأفتار](${record.sourceUrl}) • تصوير [${name(a.name)}](${a.url})\n`+
-  `[البنر](${record.sourceBannerUrl}) • تصوير [${name(b.name)}](${b.url})\n`+
-  'على [Unsplash](https://unsplash.com/?utm_source=abo7rb&utm_medium=referral)';
- return [new EmbedBuilder().setTitle(record.category==='boys'?'🖤 أفتار وبنر شباب':'🌸 أفتار وبنر بنات')
-  .setURL(record.sourceBannerUrl).setDescription(text).setImage(record.bannerURL).setThumbnail(record.avatarURL)];
+ const embed=new EmbedBuilder().setImage(record.bannerURL).setThumbnail(record.avatarURL);
+ if(showImageCredits()){
+  const name=value=>String(value).replace(/[\[\]()*_`<>]/g,'').slice(0,90);
+  const a=record.credits.avatar,b=record.credits.banner;
+  const text=`[الأفتار](${record.sourceUrl}) • تصوير [${name(a.name)}](${a.url})\n`+
+   `[البنر](${record.sourceBannerUrl}) • تصوير [${name(b.name)}](${b.url})\n`+
+   'على [Unsplash](https://unsplash.com/?utm_source=abo7rb&utm_medium=referral)';
+  embed.setDescription(text);
+ }
+ return [embed];
 }
 export async function post(client,gid,cid,{forced=false}={}){
  const key=gid+':'+cid;if(busy.has(key))return 'يوجد نشر قيد التنفيذ';
@@ -102,8 +107,8 @@ export async function post(client,gid,cid,{forced=false}={}){
     const chosen=await searchWallhaven(r.category,seen,{seed:Math.floor(Date.now()/60000)%10000});
     if(!stillCurrent())return cancelled;
     if(chosen){
-     const embed=new EmbedBuilder().setTitle(r.category==='anime'?'🎌 صورة أنمي جديدة':'🖥️ خلفية شاشة جديدة').setURL(chosen.sourceUrl)
-       .setDescription(`${chosen.width}×${chosen.height} • [عرض وتحميل من المصدر](${chosen.sourceUrl})`);
+     const embed=new EmbedBuilder();
+     if(showImageCredits())embed.setURL(chosen.sourceUrl).setDescription(`${chosen.width}×${chosen.height} • [عرض وتحميل من المصدر](${chosen.sourceUrl})`);
      if(chosen.preview)embed.setImage(chosen.preview);
      const actions=new ActionRowBuilder().addComponents(
       new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(chosen.sourceUrl).setLabel('فتح الخلفية'),
@@ -152,7 +157,7 @@ export async function post(client,gid,cid,{forced=false}={}){
   if(!stillCurrent())return cancelled;
   const credit=new EmbedBuilder()
     .setImage(`attachment://${output.filename}`);
-  if(picked.sourceUrl&&picked.sourceIds?.length) {
+  if(showImageCredits()&&picked.sourceUrl&&picked.sourceIds?.length) {
    const creditText=String(picked.credit||'').replace(/[\[\]()*_`]/g,'').slice(0,180);
    const links=[`[مصدر الأفتار](${picked.sourceUrl})`,picked.sourceBannerUrl?`[مصدر البنر](${picked.sourceBannerUrl})`:null].filter(Boolean).join(' • ');
    credit.setDescription(`${links}\n${creditText}\nالترخيص: ${String(picked.license||'').slice(0,160)}`);
@@ -249,18 +254,19 @@ async function previewFromWebsite(gid,category){
   if(process.env.WALLHAVEN_ENABLED==='false')throw Error('Wallhaven معطل في الإعدادات');
   const item=await searchWallhaven(category,new Set(),{seed:Math.floor(Date.now()/60000)%10000});
   if(!item)return ui('لا توجد خلفية مناسبة من الموقع');
-  const embed=new EmbedBuilder().setTitle('🖥️ معاينة خلفية من الموقع').setURL(item.sourceUrl);
+  const embed=new EmbedBuilder();
+  if(showImageCredits())embed.setURL(item.sourceUrl);
   if(item.preview)embed.setImage(item.preview);
-  return ui('معاينة خاصة من Wallhaven',{embeds:[embed]});
+  return ui('',{embeds:[embed]});
  }
  const before=new Set(guild(gid).packs.map(p=>p.id));
  const result=await importImages(gid,category,false,{demand:true});
  const status=guild(gid).fetchStatus?.[category];
  const p=status?.state==='success'&&!before.has(status.recordId)?pack(gid,status.recordId):null;
  if(!p)return ui(result);
- if(p.remote)return ui('معاينة خاصة من الموقع',{embeds:unsplashEmbeds(p)});
+ if(p.remote)return ui('',{embeds:unsplashEmbeds(p)});
  const out=await renderCard(p);
- return ui('معاينة خاصة من الموقع',{files:[new AttachmentBuilder(out.buffer,{name:out.filename})]});
+ return ui('',{files:[new AttachmentBuilder(out.buffer,{name:out.filename})]});
 }
 async function commands(i,client){
  const name=i.commandName,gid=i.guildId,channel=i.options.getChannel('channel');
@@ -364,22 +370,15 @@ async function buttons(i,client){
   if(p.remote){
    await i.deferReply(ep(''));
    await trackUnsplashPair(p);
-   const links=new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('فتح الأفتار الأصلي').setURL(p.avatarURL),
-    new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('فتح البنر الأصلي').setURL(p.bannerURL));
-   return i.editReply(ui('📥 افتح الصورة الأصلية لحفظها؛ روابط المصدر والمصورين في المنشور.',{components:[links]}));
+   return i.editReply(ui('',{embeds:unsplashEmbeds(p),components:[]}));
   }
   await i.deferReply(ep(''));
-  // Read only the saved website files belonging to this message.
   const {mediaPath}=await import('./db.js');
-  const a=[new AttachmentBuilder(mediaPath(p.avatar),{name:p.kind==='wallpaper'?'pc-wallpaper.jpg':'avatar.jpg'})];
-  if(p.kind==='profile'){
-   const card=await renderCard(p);
-   a.unshift(new AttachmentBuilder(card.buffer,{name:'profile-card.png'}));
-   a.push(new AttachmentBuilder((await import('./db.js')).mediaPath(p.banner),{name:'banner.jpg'}));
-  }
-  return i.editReply(ui(p.kind==='profile'?'📥 البطاقة كاملة + الأفتار + البنر — ملفات جاهزة للحفظ':'📥 ملف الخلفية جاهز للحفظ',{files:a}));
+  const image=p.kind==='profile'?new AttachmentBuilder((await renderCard(p)).buffer,{name:'profile-card.png'}):
+   new AttachmentBuilder(mediaPath(p.avatar),{name:'pc-wallpaper.jpg'});
+  return i.editReply(ui('',{files:[image],components:[]}));
  }
+
  if(action==='edit'){
   if(!admin(i))return i.reply(ep('⛔ التعديل للمشرفين فقط'));
   const m=new ModalBuilder().setCustomId('sas:rename:'+id).setTitle('تعديل اسم الطقم');
