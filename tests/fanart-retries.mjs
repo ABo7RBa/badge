@@ -1,11 +1,22 @@
 import assert from 'node:assert/strict';
-import {fetchFanartMovie} from '../src/fanart-source.js';
+import {fetchFanartMovie,validArtwork} from '../src/fanart-source.js';
 
 const art=(id,kind)=>({id:String(id),url:`https://assets.fanart.tv/fanart/movies/27205/${kind}-${id}.jpg`});
 const film=(id='tt1375666')=>({imdb_id:id,name:'Example Film',
  movieposter:[1,2,3].map(id=>art(id,'poster')),moviebackground:[4,5,6].map(id=>art(id,'background'))});
 const base={apiKey:'fanart-test-key',ids:['tt1375666'],apiFetch:async()=>({ok:true,json:async()=>film()}),
  validate:async()=>({toneScore:0.9})};
+
+// Legacy API image URLs are upgraded to HTTPS, never requested insecurely.
+let upgradedDownloads=0;
+const legacyFilm=film();
+for(const field of ['movieposter','moviebackground'])legacyFilm[field]=legacyFilm[field].map(item=>({...item,url:item.url.replace('https:','http:')}));
+assert(validArtwork(legacyFilm.movieposter[0]));
+for(const url of ['http://assets.fanart.tv.evil.test/fanart/movies/1/x.jpg','http://user:pass@assets.fanart.tv/fanart/movies/1/x.jpg','http://assets.fanart.tv:8080/fanart/movies/1/x.jpg'])assert(!validArtwork({id:'1',url}));
+const legacyPair=await fetchFanartMovie(new Set(),{...base,apiFetch:async()=>({ok:true,json:async()=>legacyFilm}),imageFetch:async url=>{
+ assert.equal(new URL(url).protocol,'https:');assert.equal(new URL(url).hostname,'assets.fanart.tv');upgradedDownloads++;return Buffer.from(url);
+}});
+assert(legacyPair);assert.equal(upgradedDownloads,6);
 
 // Outright CDN failure is bounded to one request per unique image in one film.
 let filmRequests=0,inFlight=0,peak=0;const failures=new Map();

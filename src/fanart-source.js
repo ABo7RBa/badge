@@ -17,7 +17,17 @@ export function fanartMovieUrl(id) {
   return new URL(`https://webservice.fanart.tv/v3/movies/${id}`);
 }
 export function validArtwork(item) {
-  return /^\d+$/.test(String(item?.id || '')) && safeSourceUrl(item.url, ['assets.fanart.tv'], /^\/fanart\/movies\//);
+  return /^\d+$/.test(String(item?.id || '')) && Boolean(artworkUrl(item.url));
+}
+function artworkUrl(value){
+  try{
+    const url=new URL(value);
+    // Legacy API records can contain HTTP links to the official image CDN.
+    // Upgrade only this exact known host and continue to verify TLS normally.
+    if(!['http:','https:'].includes(url.protocol)||url.hostname!=='assets.fanart.tv'||url.username||url.password||url.port)return null;
+    url.protocol='https:';
+    return safeSourceUrl(url.toString(),['assets.fanart.tv'],/^\/fanart\/movies\//)?url.toString():null;
+  }catch{return null;}
 }
 function imageNetworkError() {
   const error=Error('Fanart.tv: تعذر تنزيل صور الفيلم من خادم الصور؛ حاول لاحقًا');
@@ -40,8 +50,9 @@ export async function fetchFanartMovie(seen = new Set(), {
       throw error;
     }
     if (json?.imdb_id !== id || typeof json.name !== 'string' || !json.name.trim()) continue;
-    const posters = (Array.isArray(json.movieposter) ? json.movieposter : []).filter(validArtwork);
-    const backgrounds = (Array.isArray(json.moviebackground) ? json.moviebackground : []).filter(validArtwork);
+    const normalize=items=>(Array.isArray(items)?items:[]).filter(validArtwork).map(item=>({...item,url:artworkUrl(item.url)}));
+    const posters = normalize(json.movieposter);
+    const backgrounds = normalize(json.moviebackground);
     const pairs=[];
     for (const poster of posters.slice(0, 3)) for (const background of backgrounds.slice(0, 3)) {
       const sourceIds = [`fanart:art:${poster.id}`, `fanart:art:${background.id}`];
