@@ -1,4 +1,4 @@
-# V16.13 image sources
+# V16.14 image sources
 
 | Category | Provider | Integration |
 | --- | --- | --- |
@@ -35,3 +35,5 @@ Movie searches scan up to10catalogue records and24image downloads per attempt, w
 Visual duplicate checks against published records run during Fanart pair selection, allowing alternative artwork with different content to be tried when the service assigns new IDs to duplicate images. Artwork grid progress also keeps a successful tile reachable while its pair is pending online revalidation.
 
 V16.13 card delivery: AttachFiles is checked before fetching a pair. Rendering completes before usage tracking, and room binding/revision is checked after each asynchronous stage. Failed/cancelled new photo-card publications and failed previews roll back only their new unposted metadata so the source pair can be retried online. Earlier records and published duplicate history remain intact. Per-category locks serialize rendering/publication against new imports; no failed card silently falls back to stored pictures or source-view embeds.
+
+V16.14 adds diagnostic evidence for movie empty results: onReport exposes only counters, bounded rejection enums, safe HTTP/content-type metadata and optional schema flags. It never exposes image/request URLs, keys, raw bodies or raw QA errors. HTTP200 explicit error bodies are no longer silently treated as empty catalogues. /فحص-الأفلام privately checks the target room, permissions and source/rendering without posting; existing /جلب-صور returns source diagnostics too. npm run diagnose-movies checks the provider from the host without logging into Discord or writing state. A passing mocked suite does not diagnose the user host; its report is needed to determine that failure.

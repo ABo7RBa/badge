@@ -153,3 +153,105 @@ const exhausted={...base,apiKey:'exhausted-grid-fixture',apiFetch:async()=>({ok:
 await assert.rejects(fetchFanartMovie(new Set(),exhausted),e=>e.code==='FANART_SEARCH_CONTINUES');
 assert.equal(await fetchFanartMovie(new Set(),exhausted),null);
 console.log('PASS: Cartesian artwork windows reach separated matches and distinguish continuation from fully checked exhaustion');
+
+// Structured diagnostics report fixed counters once, including successful
+// fetches, while retaining no source URLs, titles, response bodies or keys.
+const reportSecret='report-secret-do-not-disclose';
+const reports=[];
+const diagnostics=await fetchFanartMovie(new Set(['fanart:movie:tt1375666','fanart:art:1']),{
+ ...base,apiKey:reportSecret,ids:['tt1375666','tt0816692'],
+ apiFetch:async()=>({ok:true,json:async()=>({...film('tt0816692'),name:reportSecret})}),imageFetch:async url=>Buffer.from(url),
+ onReport:async report=>{reports.push(report);}
+});
+assert(diagnostics);assert.equal(reports.length,1);
+assert.deepEqual(reports[0],{configuredFilms:2,legacySkippedFilms:1,filmsChecked:1,invalidMetadata:0,
+ validPosters:3,validBackgrounds:3,unusedPosters:2,unusedBackgrounds:3,imagesAttempted:5,imagesFailed:0,pairsChecked:1,
+ rejections:{colors:0,duplicate:0,avatar_resolution:0,banner_resolution:0,banner_aspect:0,invalid_image:0,other:0},continuation:false});
+assert(!JSON.stringify(reports[0]).includes(reportSecret));assert(!JSON.stringify(reports[0]).includes('https:'));
+
+// Early returns and configuration errors also emit exactly once.
+let skippedReportCalls=0;
+assert.equal(await fetchFanartMovie(new Set(['fanart:movie:tt1375666']),{...base,onReport:report=>{
+ skippedReportCalls++;assert.equal(report.configuredFilms,1);assert.equal(report.legacySkippedFilms,1);assert.equal(report.filmsChecked,0);
+}}),null);
+assert.equal(skippedReportCalls,1);
+let keyErrorReports=0;
+await assert.rejects(fetchFanartMovie(new Set(),{...base,apiKey:'',onReport:report=>{
+ keyErrorReports++;assert.equal(report.configuredFilms,1);assert.equal(report.filmsChecked,0);
+}}),/FANART_API_KEY/);assert.equal(keyErrorReports,1);
+let invalidCatalogueReports=0;
+await assert.rejects(fetchFanartMovie(new Set(),{...base,ids:['not-a-film'],onReport:()=>{invalidCatalogueReports++;}}),/FANART_MOVIE_IDS/);
+assert.equal(invalidCatalogueReports,1);
+
+// A bad success-body schema is distinguishable from an exhausted image list,
+// with only field types and shape booleans included in the optional sample.
+let schemaReports=0;
+assert.equal(await fetchFanartMovie(new Set(),{...base,apiKey:'schema-diagnostic-key',apiFetch:async()=>({ok:true,json:async()=>({imdb_id:'wrong-film',name:reportSecret,movieposter:'private-'+reportSecret})}),
+ onReport:report=>{
+  schemaReports++;assert.equal(report.filmsChecked,1);assert.equal(report.invalidMetadata,1);
+  assert.deepEqual(report.schema,{imdbMatches:false,nameType:'string',postersArray:false,backgroundsArray:false});
+  assert(!JSON.stringify(report).includes(reportSecret));
+ }
+}),null);assert.equal(schemaReports,1);
+
+// Some providers encode failure in an HTTP200 JSON body. These responses must
+// not be presented to the user as an ordinary empty movie catalogue.
+for(const [body,code] of [
+ [{status:'error','error message':'Invalid API key '+reportSecret},'FANART_API_AUTH'],
+ [{status:'error',message:'private service error '+reportSecret},'FANART_API_ERROR']
+]){
+ let errorReports=0;
+ await assert.rejects(fetchFanartMovie(new Set(),{...base,apiKey:'body-error-key',apiFetch:async()=>({ok:true,json:async()=>body}),onReport:report=>{
+  errorReports++;assert.equal(report.invalidMetadata,1);assert.equal(report.filmsChecked,1);assert.equal(report.imagesAttempted,0);
+  assert(!JSON.stringify(report).includes(reportSecret));
+ }}),error=>error.code===code&&!error.message.includes(reportSecret));
+ assert.equal(errorReports,1);
+}
+
+// CDN failure counters remain visible even when source fetching throws.
+let imageErrorReports=0;
+await assert.rejects(fetchFanartMovie(new Set(),{...base,apiKey:'image-error-report',imageFetch:async()=>{throw Error(reportSecret);},onReport:report=>{
+ imageErrorReports++;assert.equal(report.imagesAttempted,6);assert.equal(report.imagesFailed,6);assert.equal(report.pairsChecked,0);
+ assert(!JSON.stringify(report).includes(reportSecret));
+}}),error=>error.code==='FANART_IMAGE_NETWORK');assert.equal(imageErrorReports,1);
+
+// Each QA failure is classified by a bounded enum, never its raw message.
+const failuresByReason=['ألوان الأفتار والبنر غير متناسقة','الأفتار والبنر متشابهان أو مكرران','دقة الأفتار منخفضة','دقة البنر منخفضة',
+ 'يجب أن يكون البنر أفقيًا','Input buffer contains unsupported image format',reportSecret,'colors do not match','duplicate image'];
+let validationIndex=0,rejectionReports=0;
+assert.equal(await fetchFanartMovie(new Set(),{...base,apiKey:'rejection-report',imageFetch:async url=>Buffer.from(url),validate:async()=>{throw Error(failuresByReason[validationIndex++]);},onReport:report=>{
+ rejectionReports++;assert.equal(report.pairsChecked,9);
+ assert.deepEqual(report.rejections,{colors:2,duplicate:2,avatar_resolution:1,banner_resolution:1,banner_aspect:1,invalid_image:1,other:1});
+ assert(!JSON.stringify(report).includes(reportSecret));
+}}),null);assert.equal(rejectionReports,1);
+
+// A work-limited search is a continuation, rather than a fully checked empty
+// catalogue, and diagnostics are available before the rejection settles.
+let continuationReports=0;
+await assert.rejects(fetchFanartMovie(new Set(),{...base,apiKey:'continuation-report',ids:Array.from({length:12},(_,i)=>'tt'+String(6000000+i)),apiFetch:async raw=>{
+ const id=new URL(raw).pathname.split('/').at(-1);return {ok:true,json:async()=>({...film(id),movieposter:[]})};
+},onReport:report=>{
+ continuationReports++;assert.equal(report.continuation,true);assert.equal(report.filmsChecked,10);
+}}),error=>error.code==='FANART_SEARCH_CONTINUES');assert.equal(continuationReports,1);
+
+// Consumer-side diagnostics must not alter a successful source result.
+assert(await fetchFanartMovie(new Set(),{...base,apiKey:'callback-failure-report',imageFetch:async url=>Buffer.from(url),onReport:async()=>{throw Error('consumer failed');}}));
+console.log('PASS: one-shot structured diagnostics, safe schema summaries, explicit API body errors, image/QA reasons, continuation and callback isolation');
+
+
+// The delivery layer's published-image guard is a duplicate rejection too.
+for(const kind of ['arabic-message','code']){
+ const reason=Error(kind==='arabic-message'?'صور الفيلم مستخدمة سابقًا؛ جرب صورًا أخرى':'published guard');
+ if(kind==='code')reason.code='ALREADY_PUBLISHED';
+ let duplicateReport;
+ assert.equal(await fetchFanartMovie(new Set(),{...base,apiKey:'published-duplicate-'+kind,
+  apiFetch:async()=>({ok:true,json:async()=>({...film(),movieposter:[art(1,'poster')],moviebackground:[art(4,'background')]})}),
+  imageFetch:async url=>Buffer.from(url),validate:async()=>{throw reason;},onReport:report=>{duplicateReport=report;}
+ }),null);
+ assert.equal(duplicateReport.pairsChecked,1);assert.equal(duplicateReport.rejections.duplicate,1);assert.equal(duplicateReport.rejections.other,0);
+}
+console.log('PASS: published-image duplicate guards are classified by Arabic reason or ALREADY_PUBLISHED code');
+
+let httpReport;
+await fetchFanartMovie(new Set(),{...base,apiKey:'http-shape-fixture',apiFetch:async()=>Response.json(film()),imageFetch:async url=>Buffer.from(url),onReport:report=>{httpReport=report;}});
+assert.equal(httpReport.apiStatus,200);assert.equal(httpReport.apiContentType,'json');

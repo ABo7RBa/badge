@@ -10,6 +10,7 @@ import {collectRecentPostIds,reconcileRoom} from './history.js';
 import {pcCollectionsMessage,validatePcWallpaperRoom} from './wallpaper-links.js';
 import {randomUUID} from 'node:crypto';
 import {validatePair} from './quality-gate.js';
+import {APP_VERSION,sanitizeMovieReport,formatMovieReport,explainMovieReport,sanitizeMovieError} from './movie-diagnostics.js';
 import {imageActionButton,setupImageButtonEmojis} from './button-icons.js';
 // Optional attribution display; image-only messages are the requested default.
 const showImageCredits=()=>process.env.SHOW_IMAGE_CREDITS==='true';
@@ -63,7 +64,7 @@ function stateText(gid){
   `${category}: ${status.state==='error'?'⚠️ '+status.error:status.state==='empty'?'لا توجد نتائج جديدة':'نجح آخر جلب'}`).join('\n');
  const postingErrors=Object.entries(g.rooms).filter(([,room])=>room.error).map(([cid,room])=>`⚠️ <#${cid}>: ${room.error}`).join('\n');
  const wallhaven=process.env.WALLHAVEN_ENABLED==='false'?'Wallhaven: معطل':'Wallhaven: معاينات الأنمي وخلفيات PC';
- return `**الحالة**\nوضع النشر: من المواقع فقط\nالرومات: ${Object.keys(g.rooms).length}\nسجل أطقم المواقع: ${packs(gid).length}\nالنشر الافتراضي: 40 دقيقة\n${movieInfo}\n${keys}\n${wallhaven}\n${sources}\n${postingErrors}\n${roomText(gid)}`.slice(0,1950);
+ return `**الحالة — V${APP_VERSION}**\nوضع النشر: من المواقع فقط\nالرومات: ${Object.keys(g.rooms).length}\nسجل أطقم المواقع: ${packs(gid).length}\nالنشر الافتراضي: 40 دقيقة\n${movieInfo}\n${keys}\n${wallhaven}\n${sources}\n${postingErrors}\n${roomText(gid)}`.slice(0,1950);
 }
 async function recoverPreviousPosts(client){
  let modified=false;
@@ -168,10 +169,10 @@ export async function post(client,gid,cid,{forced=false}={}){
   if(!stillCurrent())return cancelled;
   if(!picked){
    const status=guild(gid).fetchStatus?.[r.category];
-   const reason=sourceFailure||(status?.state==='error'?status.error:null);
-   r.nextAt=Date.now()+(reason?5:Math.max(10,r.minutes))*EVERY;
+   const reason=sourceFailure||((status?.state==='error'||category==='movies'&&status?.state==='empty')?status.error:null);
+   r.nextAt=Date.now()+((sourceFailure||status?.state==='error')?5:Math.max(10,r.minutes))*EVERY;
    r.error=reason||(category==='movies'?'لم أجد ملصقًا وبنرًا جديدين؛ راجع FANART_MOVIE_IDS أو أضف أفلامًا أخرى':'لم يعثر المصدر على صور جديدة مناسبة لقسم '+r.category);save();
-   return reason?'تعذر جلب صور جديدة: '+reason:'لا توجد صور جديدة؛ توقفت دورة التكرار حتى تتوفر صور أخرى';
+   return reason?(category==='movies'&&status?.state==='empty'?'لم يتم إرسال أفلام: ':'تعذر جلب صور جديدة: ')+reason:'لا توجد صور جديدة؛ توقفت دورة التكرار حتى تتوفر صور أخرى';
   }
   if(picked.remote&&!photoCards()){
    await trackUnsplashPair(picked);
@@ -237,8 +238,10 @@ async function doImportImages(gid,category,force=false,{demand=false}={}){
  const previous=g.fetchStatus[category];
  if(!force&&previous?.retryAt>Date.now())return previous.state==='error'?'تعذر الجلب مؤخرًا: '+previous.error:'لم توجد نتائج مؤخرًا، سيُبحث لاحقًا';
  if(!force&&!demand&&Date.now()-(g.fetchAt[category]||0)<Math.max(30,Math.min(fetchMinutes,1440))*EVERY)return 'تم البحث مؤخرًا، سيُبحث لاحقًا';
+ let movieReport=null;
  const fetched=(state,error=null,recordId=null)=>{
   const now=Date.now();g.fetchStatus[category]={state,at:now,error,recordId,fetchId:randomUUID(),retryAt:state==='success'?0:now+5*EVERY};
+  if(category==='movies'&&movieReport)g.fetchStatus[category].diagnostics=movieReport;
   if(state!=='error')g.fetchAt[category]=now;save();
  };
  try {
@@ -250,6 +253,7 @@ async function doImportImages(gid,category,force=false,{demand=false}={}){
   for(const id of seenLinks)last.add(id);
   const options={seed:Math.floor(Date.now()/(80*EVERY))%99};
   if(category==='movies'){
+   options.onReport=report=>{movieReport=sanitizeMovieReport(report);};
    const known=packs(gid).filter(p=>!pendingIds.has(p.id)),hashes=new WeakMap();
    const fingerprint=buffer=>{
     if(!hashes.has(buffer))hashes.set(buffer,visualHash(buffer));
@@ -264,7 +268,10 @@ async function doImportImages(gid,category,force=false,{demand=false}={}){
    };
   }
   const external=await fetchCategoryAssets(category,last,options);
-  if(!external){fetched('empty');return 'لا توجد صورة جديدة مناسبة لهذا القسم؛ لن أكرر الصور أو آخذها من قسم آخر.';}
+  if(!external){
+   const reason=category==='movies'?explainMovieReport(movieReport):null;
+   fetched('empty',reason);return reason?'لم يتم جلب أفلام: '+reason+'\n'+formatMovieReport(movieReport):'لا توجد صورة جديدة مناسبة لهذا القسم؛ لن أكرر الصور أو آخذها من قسم آخر.';
+  }
   if(external.linkOnly){fetched('success');return `🔎 ${category}: ${external.sourceUrl}\nمعاينة Wallhaven تُنشر تلقائيًا في الروم المرتبط بهذا القسم. تُجلب الخلفيات مباشرة من الموقع.`;}
   const id=pending.at(-1)?.id||'sas-'+randomUUID().replaceAll('-','').slice(0,14);
   if(external.remote){
@@ -275,9 +282,9 @@ async function doImportImages(gid,category,force=false,{demand=false}={}){
   try {
    fileInfo=await normalizeFromUpload(gid,id,category,external.image||external.avatar,external.banner||null);
    const record=(category==='movies'?saveFetchedMovie:addPack)(gid,{...fileInfo,id,category,title:external.title,sourceId:external.sourceId,sourceIds:external.sourceIds||[external.sourceId],sourceUrl:external.sourceUrl,sourceBannerUrl:external.sourceBannerUrl||null,license:external.license,credit:external.credit,importedAutomatically:true,categoryVerified:true,photoVerified:external.photoVerified===true,filmVerified:category==='movies',verificationSource:external.verificationSource,provider:external.provider,boysStyle:external.boysStyle,boysTheme:external.boysTheme});fetched('success',null,record.id);
-   return `✅ أضفت صورة جديدة لقسم ${category} من ${external.provider}. (${record.id})`;
+   return `✅ أضفت صورة جديدة لقسم ${category} من ${external.provider}. (${record.id})`+(category==='movies'?'\n'+formatMovieReport(movieReport):'');
   }catch(e){if(fileInfo)await deleteCustom(fileInfo);throw e;}
- }catch(e){fetched('error',err(e));return 'تعذر الجلب: '+err(e);}
+ }catch(e){const message=category==='movies'?sanitizeMovieError(e):err(e);fetched('error',message);return 'تعذر الجلب: '+message+(category==='movies'?'\n'+formatMovieReport(movieReport):'');}
 }
 // Creates only missing channels, leaves existing channels untouched.
 // Requires a real user with Manage Server and the bot with Manage Channels.
@@ -331,15 +338,44 @@ async function previewFromWebsite(gid,category,{sourceLockHeld=false}={}){
   return ui('',{files:[new AttachmentBuilder(out.buffer,{name:out.filename})]});
  }catch(error){if(p.remote)discardUnsentPhoto(gid,p);throw error;}
 }
+async function checkMovies(i,client){
+ const cid=i.options.getChannel('channel')?.id||i.channelId;
+ const g=guild(i.guildId),room=g.rooms[cid];
+ const lines=[`**فحص الأفلام — V${APP_VERSION}**`,`الروم: <#${cid}>`,
+  `الربط: ${room?room.category+' • '+(room.enabled?'يعمل':'متوقف'):'غير مربوط؛ استخدم /ربط-روم واختر movies'}`,
+  `الجلب التلقائي: ${process.env.AUTO_FETCH==='false'?'متوقف':'مفعّل'}`,
+  `مفتاح Fanart: ${process.env.FANART_API_KEY?.trim()?'موجود؛ قيمته مخفية':'غير موجود؛ أضف FANART_API_KEY إلى .env'}`];
+ try{
+  const channel=await client.channels.fetch(cid);
+  if(!channel||channel.guildId!==i.guildId)lines.push('⚠️ تعذر الوصول إلى الروم.');
+  else{
+   const permissions=channel.permissionsFor(client.user);
+   const required=[[PermissionFlagsBits.ViewChannel,'عرض الروم'],[PermissionFlagsBits.SendMessages,'الإرسال'],[PermissionFlagsBits.EmbedLinks,'تضمين الصور'],[PermissionFlagsBits.AttachFiles,'إرفاق الملفات']];
+   lines.push('الصلاحيات: '+required.map(([flag,label])=>`${permissions?.has(flag)?'✓':'✗'} ${label}`).join(' • '));
+  }
+ }catch{lines.push('⚠️ تعذر قراءة صلاحيات الروم.');}
+ const result=await importImages(i.guildId,'movies',true,{demand:true});
+ const status=g.fetchStatus?.movies;
+ lines.push(result);
+ if(status?.state==='success'&&status.recordId){
+  try{
+   const record=pack(i.guildId,status.recordId);if(!record)throw Error('بيانات الطقم غير متاحة');
+   await renderCard(record);lines.push('✓ نجح تجهيز بطاقة الفيلم.');
+  }catch(error){lines.push('⚠️ فشل تجهيز البطاقة: '+sanitizeMovieError(error));}
+ }
+ lines.push('تقرير خاص فقط؛ لم يُرسل أي منشور إلى الروم ولم يُحذف سجل الاستخدام.');
+ return ui(lines.join('\n').slice(0,1950));
+}
 async function commands(i,client){
  const name=i.commandName,gid=i.guildId,channel=i.options.getChannel('channel');
- const adminNames=new Set(['تجهيز-الرومات','ربط-روم','فصل-روم','تشغيل-روم','إيقاف-روم','مدة-النشر','نشر-الآن','جلب-صور','مجموعات-4k','معاينة']);
+ const adminNames=new Set(['تجهيز-الرومات','ربط-روم','فصل-روم','تشغيل-روم','إيقاف-روم','مدة-النشر','نشر-الآن','جلب-صور','مجموعات-4k','معاينة','فحص-الأفلام']);
  if(adminNames.has(name)&&!admin(i))return i.reply(ep('⛔ هذا الأمر يحتاج صلاحية إدارة السيرفر.'));
  if(name==='تجهيز-الرومات'){await i.deferReply(ep(''));return i.editReply(await setupFiveRooms(i));}
  if(name==='لوحة-التحكم'||name==='مساعدة')return i.reply(HOME());
  if(name==='التصنيفات')return i.reply(ep(categoryText(gid)));
  if(name==='الرومات')return i.reply(ep(roomText(gid)));
  if(name==='حالة')return i.reply(ep(stateText(gid)));
+ if(name==='فحص-الأفلام'){await i.deferReply(ep(''));return i.editReply(await checkMovies(i,client));}
  if(name==='معاينة'){await i.deferReply(ep(''));return i.editReply(await previewFromWebsite(gid,i.options.getString('category',true)));}
  if(name==='ربط-روم'){
   const c=i.options.getString('category',true);if(!guild(gid).categories[c])throw Error('التصنيف غير موجود');
@@ -515,7 +551,7 @@ export async function start(token){
  const client=new Client({intents:[GatewayIntentBits.Guilds]});
  migrateLegacySettings();
  client.once(Events.ClientReady,async c=>{
-  console.log('✅ Logged in as '+c.user.tag);
+  console.log('✅ Logged in as '+c.user.tag+' • V'+APP_VERSION);
   const buttonIcons=await setupImageButtonEmojis(c);
   if(buttonIcons.failed.length)console.warn('⚠️ تعذر تجهيز بعض أيقونات الأزرار؛ تُستخدم رموز بديلة:',buttonIcons.failed.join(', '));
   else console.log('✅ أيقونات الأزرار جاهزة');

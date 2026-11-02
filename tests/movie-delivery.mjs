@@ -22,7 +22,8 @@ try{
  const output=execFileSync(process.execPath,['--input-type=module','-'],{cwd:temp,encoding:'utf8',input:`
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import {importImages,post} from './src/bot.js';
+import {importImages,post,handleInteraction} from './src/bot.js';
+import {MessageFlags} from 'discord.js';
 import {guild,makeRoom,store,save,loadStore,migrateLegacySettings} from './src/db.js';
 process.env.FANART_API_KEY='movie-delivery-test-key';
 process.env.FANART_MOVIE_IDS='tt1375666';process.env.AUTO_FETCH='true';
@@ -149,6 +150,27 @@ assert.equal(upgraded.packs[0].deliveryState,'published');assert.equal(upgraded.
 assert.equal(upgraded.packs[2].deliveryState,'published');assert.deepEqual(upgraded.rooms.room.usedIds,['old-sent']);
 assert.equal(upgraded.fetchStatus.movies,undefined);assert.equal(upgraded.fetchAt.movies,0);
 assert.equal(migrateLegacySettings(undefined,legacy),false);
+// The real diagnostic handler is private and never publishes to its target.
+mode='ok';const diagnostic=destination('private-movie-diagnostic');
+let diagnosticReply;
+const interaction={guildId:diagnostic.gid,channelId:'room',commandName:'فحص-الأفلام',deferred:false,
+ memberPermissions:{has:()=>true},options:{getChannel:()=>({id:'room'}),getString:()=> 'movies'},
+ isAutocomplete:()=>false,isChatInputCommand:()=>true,
+ async deferReply(payload){assert.equal(payload.flags,MessageFlags.Ephemeral);this.deferred=true;},
+ async editReply(payload){diagnosticReply=typeof payload==='string'?payload:payload.content;},
+ async reply(payload){diagnosticReply=payload.content;}};
+await handleInteraction(interaction,diagnostic.client);
+assert.match(diagnosticReply,/فحص الأفلام/);assert.match(diagnosticReply,/غير المستخدمة/);
+assert.match(diagnosticReply,/نجح تجهيز بطاقة الفيلم/);assert.match(diagnosticReply,/لم يُرسل أي منشور/);
+assert(!diagnosticReply.includes(process.env.FANART_API_KEY));
+assert.equal(diagnostic.messages.length,0);assert.equal(diagnostic.state.attempts,0);assert.equal(diagnostic.room.count,0);
+assert.equal(diagnostic.g.packs[0].deliveryState,'pending');
+// The already-registered fetch command also returns the useful report, so users
+// can diagnose without waiting for a new global slash command to appear.
+interaction.commandName='جلب-صور';interaction.options.getChannel=()=>null;
+await handleInteraction(interaction,diagnostic.client);
+assert.match(diagnosticReply,/غير المستخدمة/);assert.equal(diagnostic.messages.length,0);
+assert.equal(diagnostic.g.packs.length,1);assert.equal(diagnostic.g.packs[0].deliveryState,'pending');
 console.log('PASS: manual-fetch movie delivery, online pending refresh, persisted failed-send retry, concurrent room locking, no repetition and no cached-image fallback');
 `});
  process.stdout.write(output);assert(output.includes('PASS:'));

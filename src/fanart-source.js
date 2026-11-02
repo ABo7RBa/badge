@@ -60,13 +60,42 @@ function workLimitError(){
  const error=Error('Fanart.tv: لم يوجد طقم مناسب ضمن حد الفحص الحالي؛ سيُستكمل البحث في صور وأفلام أخرى بالمحاولة التالية');
  error.code='FANART_SEARCH_CONTINUES';return error;
 }
+function rejectionReason(error){
+ const text=String(error?.code||'')+' '+String(error?.message||'');
+ if(/avatar_resolution|دقة الأفتار|avatar.{0,30}(?:resolution|small|low)/i.test(text))return 'avatar_resolution';
+ if(/banner_resolution|دقة البنر|banner.{0,30}(?:resolution|small|low)/i.test(text))return 'banner_resolution';
+ if(/banner_aspect|البنر أفقي|banner.{0,30}(?:aspect|landscape|horizontal)/i.test(text))return 'banner_aspect';
+ if(/duplicate|ALREADY_PUBLISHED|متشابه|مكرر|متطابق|مستخدم|identical|same image/i.test(text))return 'duplicate';
+ if(/colors|colou?r|palette|tone|ألوان|متناسق/i.test(text))return 'colors';
+ if(/invalid_image|غير صالحة|غير قابلة للفحص|invalid image|unsupported image|input buffer|corrupt|not an image/i.test(text))return 'invalid_image';
+ return 'other';
+}
+function responseSchema(json,id){
+ return {imdbMatches:json?.imdb_id===id,nameType:json?.name===null?'null':Array.isArray(json?.name)?'array':typeof json?.name,
+  postersArray:Array.isArray(json?.movieposter),backgroundsArray:Array.isArray(json?.moviebackground)};
+}
+function explicitApiError(json){
+ if(!json||typeof json!=='object'||String(json.status).trim().toLowerCase()!=='error')return null;
+ const text=[json.error,json['error message'],json.message,json.error_message,json.errorMessage].filter(value=>typeof value==='string').join(' ');
+ const invalidKey=/(?:invalid|missing|incorrect|unauthori[sz]ed)\s+(?:api[\s_-]*)?key\b|\bapi[\s_-]*key\b.{0,24}(?:invalid|missing|incorrect|unauthori[sz]ed|not\s+valid)/i.test(text);
+ const error=Error(invalidKey?'Fanart.tv: تحقق من صلاحية مفتاح API؛ أعاد المصدر رد رفض للمفتاح':
+  'Fanart.tv: أعاد المصدر رد خطأ بدل بيانات الفيلم؛ حاول لاحقًا أو شغّل فحص الأفلام');
+ error.code=invalidKey?'FANART_API_AUTH':'FANART_API_ERROR';return error;
+}
 export async function fetchFanartMovie(seen = new Set(), {
-  apiKey = process.env.FANART_API_KEY, ids = filmIds(), seed = 0,
-  apiFetch = fetch, imageFetch = readLimited, validate = validatePair
+  apiKey = process.env.FANART_API_KEY, ids, seed = 0,
+  apiFetch = fetch, imageFetch = readLimited, validate = validatePair, onReport
 } = {}) {
+ const report={configuredFilms:0,legacySkippedFilms:0,filmsChecked:0,invalidMetadata:0,
+  validPosters:0,validBackgrounds:0,unusedPosters:0,unusedBackgrounds:0,imagesAttempted:0,imagesFailed:0,pairsChecked:0,
+  rejections:{colors:0,duplicate:0,avatar_resolution:0,banner_resolution:0,banner_aspect:0,invalid_image:0,other:0},continuation:false};
+ let schema,acceptedMetadata=0;
+ try{
+  const configured=ids===undefined?filmIds():filmIds(ids.join(','));report.configuredFilms=configured.length;
   const key = requireApiKey(apiKey, 'FANART_API_KEY');
   seen=new Set([...seen].flatMap(value=>[value,...String(value).split('|').filter(id=>/^fanart:art:\d+$/.test(id))]));
-  const pending = filmIds(ids.join(',')).filter(id => !seen.has(`fanart:movie:${id}`));
+  const pending = configured.filter(id => !seen.has(`fanart:movie:${id}`));
+  report.legacySkippedFilms=configured.length-pending.length;
   if(!pending.length)return null;
   const state=searchState(key,pending,seed),start=state.film;
   const outcomes=new Map();
@@ -78,16 +107,32 @@ export async function fetchFanartMovie(seen = new Set(), {
     // a bad film. Credentials/HTTP errors still abort rather than being hidden.
     state.film=(index+1)%pending.length;
     let json;
+    report.filmsChecked++;
     try {
-      json = await sourceJson(fanartMovieUrl(id,key), {apiFetch, source: 'Fanart.tv', headers: {'api-key': key}});
+      const inspectResponse=async(url,options)=>{
+       const response=await apiFetch(url,options);
+       if(Number.isInteger(response.status)&&response.status>=100&&response.status<=599)report.apiStatus=response.status;
+       const type=response.headers?.get?.('content-type');
+       if(type)report.apiContentType=/json/i.test(type)?'json':/html/i.test(type)?'html':'other';
+       return response;
+      };
+      json = await sourceJson(fanartMovieUrl(id,key), {apiFetch:inspectResponse, source: 'Fanart.tv', headers: {'api-key': key}});
     } catch (error) {
       if (error.status === 404) continue;
       throw error;
     }
-    if (json?.imdb_id !== id || typeof json.name !== 'string' || !json.name.trim()) continue;
+    const bodyError=explicitApiError(json);
+    if(bodyError){report.invalidMetadata++;schema??=responseSchema(json,id);throw bodyError;}
+    if(json?.imdb_id!==id||typeof json.name!=='string'||!json.name.trim()){
+      report.invalidMetadata++;schema??=responseSchema(json,id);continue;
+    }
+    acceptedMetadata++;
     const normalize=items=>(Array.isArray(items)?items:[]).filter(validArtwork).map(item=>({...item,url:artworkUrl(item.url)}));
     const unused=item=>!seen.has(`fanart:art:${item.id}`);
-    const allPosters=normalize(json.movieposter).filter(unused),allBackgrounds=normalize(json.moviebackground).filter(unused);
+    const validPosters=normalize(json.movieposter),validBackgrounds=normalize(json.moviebackground);
+    report.validPosters+=validPosters.length;report.validBackgrounds+=validBackgrounds.length;
+    const allPosters=validPosters.filter(unused),allBackgrounds=validBackgrounds.filter(unused);
+    report.unusedPosters+=allPosters.length;report.unusedBackgrounds+=allBackgrounds.length;
     if(!allPosters.length||!allBackgrounds.length)continue;
     // Walk a Cartesian grid of bounded artwork tiles. Moving both image
     // offsets together can permanently miss a matching poster/background far
@@ -115,9 +160,9 @@ export async function fetchFanartMovie(seen = new Set(), {
       const requests=missing.slice(0,available);let cursor=0;
       const worker=async()=>{
         while(cursor<requests.length){
-          const url=requests[cursor++];
+          const url=requests[cursor++];report.imagesAttempted++;
           try{outcomes.set(url,{ok:true,value:await imageFetch(url)});}
-          catch{downloadFailed=true;outcomes.set(url,{ok:false});}
+          catch{report.imagesFailed++;downloadFailed=true;outcomes.set(url,{ok:false});}
         }
       };
       await Promise.all(Array.from({length:Math.min(3,requests.length)},worker));
@@ -126,7 +171,7 @@ export async function fetchFanartMovie(seen = new Set(), {
       for(const {poster,background,sourceIds} of pairs){
         const pairId=sourceIds.join('|');
         if(checked.has(pairId)||!outcomes.get(poster.url)?.ok||!outcomes.get(background.url)?.ok)continue;
-        checked.add(pairId);downloadedPair=true;
+        checked.add(pairId);downloadedPair=true;report.pairsChecked++;
         try{
           const avatar=outcomes.get(poster.url).value,banner=outcomes.get(background.url).value;
           await validate(avatar,banner,{minAvatar:320,minBanner:800,maxToneDistance:0.4});
@@ -138,7 +183,7 @@ export async function fetchFanartMovie(seen = new Set(), {
             sourceBannerUrl:'https://fanart.tv/',credit:'Film artwork via Fanart.tv — rights belong to their owners',
             license:'Fanart.tv API terms; film artwork remains copyrighted',
             filmVerified:true,verificationSource:'fanart-movie',provider:'Fanart.tv'};
-        }catch{ /* A fetched but unsuitable pair does not exhaust later artwork. */ }
+        }catch(error){report.rejections[rejectionReason(error)]++; /* Continue to later artwork. */ }
       }
       if(limited||posters.length<=ART_WINDOW&&backgrounds.length<=ART_WINDOW)break;
     }
@@ -147,6 +192,14 @@ export async function fetchFanartMovie(seen = new Set(), {
     if(limited)break;
   }
   if(downloadFailed&&!downloadedPair)throw imageNetworkError();
-  if(limited||moreArtwork||pending.length>MAX_FILMS)throw workLimitError();
+  if(limited||moreArtwork||pending.length>MAX_FILMS){report.continuation=true;throw workLimitError();}
   return null;
+ }finally{
+  // Only fixed counters, enums and booleans leave this adapter. Neither raw
+  // bodies, image URLs nor request URLs (which contain a key) are reported.
+  if(schema&&acceptedMetadata===0)report.schema=schema;
+  if(typeof onReport==='function'){
+   try{await onReport({...report,rejections:{...report.rejections},...(report.schema?{schema:{...report.schema}}:{})});}catch{ /* Diagnostics cannot break fetching. */ }
+  }
+ }
 }

@@ -12,6 +12,7 @@ export const cmds=[
  ch(command('مدة-النشر','تغيير الفاصل الزمني',true)).addIntegerOption(o=>o.setName('minutes').setDescription('المدة الجديدة').setRequired(true).setMinValue(5).setMaxValue(1440)),
  ch(command('نشر-الآن','إرسال صورة جديدة فورًا',true)),
  ch(command('مجموعات-4k','مشاركة روابط مجموعات 4K Wallpapers في روم PC فقط (بدون سحب صور)',true)),
+ ch(command('فحص-الأفلام','تقرير خاص يحدد سبب توقف movies دون نشر صور في الروم',true)),
  cat(command('جلب-صور','صور Unsplash وأفلام Fanart.tv وروابط Wallhaven',true)),
  cat(command('استكشاف-وولهيفن','روابط استكشاف آمنة على Wallhaven دون إعادة رفع الصور',true)),
  command('التصنيفات','عرض تصنيفات الصور'),
