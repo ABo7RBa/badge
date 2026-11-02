@@ -20,6 +20,7 @@ try {
  const banner=await sharp({create:{width:1600,height:900,channels:3,background:'#81708e'}})
   .composite([{input:Buffer.from('<svg width="1600" height="900"><path d="M0 850 L700 80 L1600 850 Z" fill="#392d45"/></svg>')}]).png().toBuffer();
  await fs.writeFile(path.join(tmp,'avatar.png'),avatar);await fs.writeFile(path.join(tmp,'banner.png'),banner);
+ await sharp(banner).resize(1920,1080).png().toFile(path.join(tmp,'pc.png'));
  const output=execFileSync(process.execPath,['--input-type=module','-'],{cwd:tmp,encoding:'utf8',input:`
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -30,7 +31,7 @@ import {guild,packs,makeRoom} from './src/db.js';
 process.env.UNSPLASH_ACCESS_KEY='test-key';process.env.FANART_API_KEY='test-key';
 process.env.FANART_MOVIE_IDS='tt1375666';process.env.WALLHAVEN_ENABLED='true';
 delete process.env.PHOTO_DISPLAY; // Composite cards are the default, including on old .env files.
-const av=await fs.readFile('avatar.png'),bn=await fs.readFile('banner.png');
+const av=await fs.readFile('avatar.png'),bn=await fs.readFile('banner.png'),pc=await fs.readFile('pc.png');
 for(const key of ['DOWNLOAD_EMOJI_ID','EDIT_EMOJI_ID','DELETE_EMOJI_ID'])delete process.env[key];
 const registered=new Collection(),iconImages=[];
 const emojis={fetch:async()=>registered,create:async({name,attachment})=>{
@@ -71,8 +72,16 @@ globalThis.fetch=async(raw,opts)=>{
   movieposter:[{id:'1',url:'https://assets.fanart.tv/fanart/movies/27205/poster.png'}],
   moviebackground:[{id:'2',url:'https://assets.fanart.tv/fanart/movies/27205/background.png'}]});
  if(u.hostname==='assets.fanart.tv')return new Response(u.pathname.endsWith('poster.png')?av:bn,{headers:{'content-type':'image/png'}});
- if(u.hostname==='w.wallhaven.cc')return new Response(u.pathname.includes('a1b2c3')?av:bn,{headers:{'content-type':'image/png'}});
+ if(u.hostname==='w.wallhaven.cc'){
+  assert.equal(opts?.headers?.Authorization,undefined);assert.equal(opts?.headers?.['X-API-Key'],undefined);assert.equal(opts?.redirect,'error');
+  return new Response(u.pathname.includes('p1c2g3')?pc:u.pathname.includes('a1b2c3')?av:bn,{headers:{'content-type':'image/png'}});
+ }
  if(u.hostname==='wallhaven.cc'){
+  if(u.pathname==='/api/v1/w/p1c2g3')return Response.json({data:{id:'p1c2g3',url:'https://wallhaven.cc/w/p1c2g3',category:'general',purity:'sfw',dimension_x:2560,dimension_y:1440,tags:[{name:'video games'}],path:'https://w.wallhaven.cc/full/p1/wallhaven-p1c2g3.jpg'}});
+  if(u.searchParams.get('atleast')==='1920x1080'){
+   assert(['video games','anime'].includes(u.searchParams.get('q')));assert.equal(u.searchParams.get('purity'),'100');
+   return Response.json({data:u.searchParams.get('q')==='anime'?[]:[{id:'p1c2g3',url:'https://wallhaven.cc/w/p1c2g3',category:'general',purity:'sfw',dimension_x:2560,dimension_y:1440,path:'https://w.wallhaven.cc/full/p1/wallhaven-p1c2g3.jpg',thumbs:{large:'https://th.wallhaven.cc/lg/p1/p1c2g3.jpg'}}]});
+  }
   const anime=u.searchParams.get('categories')==='010',avatar=anime&&u.searchParams.get('atleast')==='600x600',id=avatar?'a1b2c3':'d4e5f6';
   return Response.json({data:[{id,url:'https://wallhaven.cc/w/'+id,category:anime?'anime':'general',purity:'sfw',dimension_x:avatar?800:2560,dimension_y:avatar?1000:1440,
    path:'https://w.wallhaven.cc/full/'+id.slice(0,2)+'/wallhaven-'+id+'.jpg',thumbs:{large:'https://th.wallhaven.cc/lg/'+id.slice(0,2)+'/'+id+'.jpg'}}]});
@@ -103,11 +112,22 @@ for(const category of ['girls','boys','movies','anime','pc_wallpapers']){
    assert.equal(buttons[index].style,ButtonStyle.Secondary);assert.equal(buttons[index].label,undefined);
    assert.equal(buttons[index].emoji.id,expectedIconIds[index]);assert(buttons[index].custom_id.startsWith('sas:'+action+':'));
   }
- }else assert.equal(buttons[1].emoji.id,expectedIconIds[2]);
+ }else{
+  assert.equal(buttons.length,2);
+  for(const [index,action] of ['download','delete'].entries()){
+   assert.equal(buttons[index].style,ButtonStyle.Secondary);assert.equal(buttons[index].label,undefined);assert.equal(buttons[index].url,undefined);
+   assert.equal(buttons[index].custom_id,'sas:'+action+':wh_p1c2g3');assert.equal(buttons[index].emoji.id,expectedIconIds[index===0?0:2]);
+  }
+ }
  const imported=packs(gid,category)[0];
  if(category==='pc_wallpapers'){
-  assert.equal(embed.url,undefined);assert(embed.image.url.includes('th.wallhaven.cc'));assert(!messages[0].files);
-  assert.deepEqual(room.wallhavenUsedIds,['wallhaven:d4e5f6']);
+  assert.equal(embed.url,undefined);assert.equal(messages[0].files.length,1);
+  assert.equal(embed.image.url,'attachment://'+messages[0].files[0].name);
+  assert(messages[0].files[0].attachment.equals(pc),'PC must attach the exact original source bytes');
+  const info=await (await import('sharp')).default(messages[0].files[0].attachment).metadata();assert.equal(info.width,1920);assert.equal(info.height,1080);
+  assert(requested.some(url=>url.pathname==='/api/v1/w/p1c2g3'),'PC classification must check detail tags');
+  assert(!requested.some(url=>url.hostname==='th.wallhaven.cc'),'PC must never retrieve a thumbnail');
+  assert.deepEqual(room.wallhavenUsedIds,['wallhaven:p1c2g3']);
  }else if(category==='movies'||category==='anime'){
   assert(messages[0].files[0].attachment.length>1000);assert.equal(embed.description,undefined);
   const again=await importImages(gid,category,true);assert(!again.startsWith('✅'),again);

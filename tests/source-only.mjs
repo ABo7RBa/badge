@@ -12,7 +12,7 @@ try{
  await fs.cp(path.join(root,'src'),path.join(temp,'src'),{recursive:true});
  await fs.writeFile(path.join(temp,'package.json'),'{"type":"module"}');
  await fs.symlink(path.join(root,'node_modules'),path.join(temp,'node_modules'),'dir');
- for(const [kind,width,height,shape] of [['avatar',800,1000,'<circle cx="220" cy="350" r="180" fill="#281d3b"/>'],['banner',1600,900,'<path d="M0 850 L700 80 L1600 850 Z" fill="#392d45"/>']]){
+ for(const [kind,width,height,shape] of [['avatar',800,1000,'<circle cx="220" cy="350" r="180" fill="#281d3b"/>'],['banner',1600,900,'<path d="M0 850 L700 80 L1600 850 Z" fill="#392d45"/>'],['pc',1920,1080,'<path d="M0 1000 L900 80 L1920 1000 Z" fill="#392d45"/>']]){
   await sharp({create:{width,height,channels:3,background:'#81708e'}}).composite([{input:Buffer.from('<svg width="'+width+'" height="'+height+'">'+shape+'</svg>')}]).png().toFile(path.join(temp,kind+'.png'));
  }
  const result=execFileSync(process.execPath,['--input-type=module','-'],{cwd:temp,encoding:'utf8',input:`
@@ -25,7 +25,7 @@ process.env.AUTO_FETCH='true';process.env.WALLHAVEN_ENABLED='true';
 delete process.env.PHOTO_DISPLAY; // Default publication must be a fresh source-derived composite card.
 process.env.FANART_API_KEY='test';process.env.FANART_MOVIE_IDS='tt1375666';
 const seed={kind:'profile',avatar:'avatar.png',banner:'banner.png',reviewedWithV86:true,visualHash:'a'.repeat(64),bannerVisualHash:'b'.repeat(64),avatarDHash:'abcd',bannerDHash:'1234'};
-const av=await fs.readFile('avatar.png'),bn=await fs.readFile('banner.png');
+const av=await fs.readFile('avatar.png'),bn=await fs.readFile('banner.png'),pc=await fs.readFile('pc.png');
 let mode='good',phase='fresh',requests=[];
 globalThis.fetch=async raw=>{
  const u=new URL(raw);requests.push(u);
@@ -47,18 +47,23 @@ globalThis.fetch=async raw=>{
  }
  if(u.hostname==='webservice.fanart.tv')return Response.json({imdb_id:'tt1375666',name:'Inception',movieposter:mode==='empty'?[]:[{id:'1',url:'https://assets.fanart.tv/fanart/movies/1/poster.png'}],moviebackground:mode==='empty'?[]:[{id:'2',url:'https://assets.fanart.tv/fanart/movies/1/banner.png'}]});
  if(u.hostname==='assets.fanart.tv')return new Response(u.pathname.endsWith('poster.png')?av:bn,{headers:{'content-type':'image/png'}});
- if(u.hostname==='w.wallhaven.cc')return new Response(u.pathname.includes('a1b2c3')?av:bn,{headers:{'content-type':'image/png'}});
+ if(u.hostname==='w.wallhaven.cc'){
+  if(u.pathname.includes('p1c2g3'))return mode==='image-fail'?new Response('unavailable',{status:503}):new Response(mode==='low-res'?bn:pc,{headers:{'content-type':'image/png'}});
+  return new Response(u.pathname.includes('a1b2c3')?av:bn,{headers:{'content-type':'image/png'}});
+ }
  if(u.hostname==='wallhaven.cc'){
+  if(u.pathname==='/api/v1/w/p1c2g3')return Response.json({data:{id:'p1c2g3',url:'https://wallhaven.cc/w/p1c2g3',category:'general',purity:'sfw',dimension_x:2560,dimension_y:1440,tags:[{name:mode==='wrong-tags'?'landscape':'video games'}],path:'https://w.wallhaven.cc/full/p1/wallhaven-p1c2g3.jpg'}});
+  if(u.searchParams.get('atleast')==='1920x1080')return Response.json({data:mode==='empty'||u.searchParams.get('q')==='anime'?[]:[{id:'p1c2g3',url:'https://wallhaven.cc/w/p1c2g3',category:'general',purity:'sfw',dimension_x:2560,dimension_y:1440,path:'https://w.wallhaven.cc/full/p1/wallhaven-p1c2g3.jpg',thumbs:{large:'https://th.wallhaven.cc/lg/p1/p1c2g3.jpg'}}]});
   const anime=u.searchParams.get('categories')==='010',avatar=anime&&u.searchParams.get('atleast')==='600x600';
   const id=avatar?'a1b2c3':'d4e5f6';
   return Response.json({data:mode==='empty'?[]:[{id,url:'https://wallhaven.cc/w/'+id,category:anime?'anime':'general',purity:'sfw',dimension_x:avatar?900:2560,dimension_y:avatar?1200:1440,path:'https://w.wallhaven.cc/full/'+id.slice(0,2)+'/wallhaven-'+id+'.jpg',thumbs:{large:'https://th.wallhaven.cc/lg/'+id.slice(0,2)+'/'+id+'.jpg'}}]});
  }
  throw Error('Unexpected network');
 };
-for(const category of ['girls','boys','movies','anime','pc_wallpapers'])for(const outcome of ['good','fail','empty','image-fail']){
- if(outcome==='image-fail'&&!['girls','boys'].includes(category))continue;
+for(const category of ['girls','boys','movies','anime','pc_wallpapers'])for(const outcome of category==='pc_wallpapers'?['good','fail','empty','image-fail','wrong-tags','low-res','send-fail']:['good','fail','empty','image-fail']){
+ if(outcome==='image-fail'&&!['girls','boys','pc_wallpapers'].includes(category))continue;
  const gid=category+'-'+outcome,g=guild(gid),room=g.rooms.room=makeRoom(category);
- g.packs.push({...seed,id:'old-manual',category,bundled:false,importedAutomatically:false,photoVerified:true,categoryVerified:true,filmVerified:category==='movies',verificationSource:category==='movies'?'manual':'moderator-photo'});
+ g.packs.push({...seed,id:'old-manual',category,kind:category==='pc_wallpapers'?'wallpaper':'profile',avatar:category==='pc_wallpapers'?'pc.png':seed.avatar,banner:category==='pc_wallpapers'?'pc.png':seed.banner,bundled:false,importedAutomatically:false,photoVerified:true,categoryVerified:true,filmVerified:category==='movies',verificationSource:category==='movies'?'manual':'moderator-photo'});
  assert(g.packs.some(p=>p.id==='old-manual'),'legacy saved photo must tempt fallback');
  // Pre-existing source records must also be ignored in strict mode.
  if(['girls','boys'].includes(category)){
@@ -69,7 +74,7 @@ for(const category of ['girls','boys','movies','anime','pc_wallpapers'])for(cons
  delete g.fetchStatus?.[category];g.fetchAt[category]=0;
  const recordsBefore=g.packs.map(record=>record.id),usedBefore=[...room.usedIds];
  const messages=[];requests=[];const tasks=[];
- const client={user:{id:'bot'},channels:{fetch:async()=>({guildId:gid,isTextBased:()=>true,permissionsFor:()=>({has:()=>true}),send:async p=>messages.push(p)})}};
+ const client={user:{id:'bot'},channels:{fetch:async()=>({guildId:gid,isTextBased:()=>true,permissionsFor:()=>({has:()=>true}),send:async p=>{if(mode==='send-fail')throw Error('test PC send denied');messages.push(p);}})}};
  const timers={setInterval:(callback,ms)=>{tasks.push({callback,ms});return tasks.length;},setTimeout:(callback,ms)=>{tasks.push({callback,ms});return tasks.length;},clearInterval(){},clearTimeout(){}};
  const automation=await startAutomation(client,{timers});
  assert(!tasks.some(t=>t.ms===300000),'strict mode must not prefetch unused library packs');
@@ -89,11 +94,27 @@ for(const category of ['girls','boys','movies','anime','pc_wallpapers'])for(cons
    assert.deepEqual(await fs.readdir('storage/packs/'+gid).catch(error=>{if(error.code==='ENOENT')return [];throw error;}),[]);
   }
   if(category==='movies'){assert(requests.some(u=>u.hostname==='assets.fanart.tv'));assert.notEqual(room.lastId,'old-manual');}
-  if(category==='pc_wallpapers')assert(messages[0].embeds[0].toJSON().image.url.includes('th.wallhaven.cc'));
+  if(category==='pc_wallpapers'){
+   assert.equal(messages[0].files.length,1);assert(messages[0].files[0].attachment.equals(pc),'attach the original PC image, not a generated pair card');
+   const embed=messages[0].embeds[0].toJSON();assert.equal(embed.image.url,'attachment://'+messages[0].files[0].name);assert.equal(embed.url,undefined);assert.equal(embed.description,undefined);
+   const meta=await (await import('sharp')).default(messages[0].files[0].attachment).metadata();assert.equal(meta.width,1920);assert.equal(meta.height,1080);
+   assert(requests.some(url=>url.pathname==='/api/v1/w/p1c2g3'));assert.deepEqual(room.wallhavenUsedIds,['wallhaven:p1c2g3']);
+   const buttons=messages[0].components[0].toJSON().components;assert.equal(buttons.length,2);assert.equal(buttons[0].custom_id,'sas:download:wh_p1c2g3');assert.equal(buttons[1].custom_id,'sas:delete:wh_p1c2g3');assert(buttons.every(button=>!button.url));
+  }
   if(category==='anime'){assert(messages[0].files[0].attachment.length>1000);assert.equal(messages[0].embeds[0].toJSON().description,undefined);assert.equal(requests.filter(u=>u.hostname==='w.wallhaven.cc').length,2);}
  }else{
   assert.equal(messages.length,0,'never send local/source-library fallback on '+category+' '+outcome);assert.equal(room.count,0);assert(room.error);
-  if(outcome==='image-fail'){
+  if(category==='pc_wallpapers'){
+   assert.deepEqual(room.wallhavenUsedIds||[],[],'failed or unsuitable PC images must never advance source history');
+   assert.deepEqual(room.usedIds,usedBefore);assert.equal(room.lastId,null);
+   assert.deepEqual(g.packs.map(record=>record.id),recordsBefore,'no local fallback or PC library record on failure');
+   if(outcome==='image-fail'||outcome==='send-fail'){
+    mode='good';requests=[];const recovered=await post(client,gid,'room',{forced:true});
+    assert.equal(messages.length,1,recovered);assert.equal(room.count,1);assert(messages[0].files[0].attachment.equals(pc));
+    assert.deepEqual(room.wallhavenUsedIds,['wallhaven:p1c2g3']);assert.equal(room.error,null);assert.equal(room.enabled,false);
+   }
+  }
+  if(outcome==='image-fail'&&['girls','boys'].includes(category)){
    const failedImageURLs=requests.filter(url=>url.hostname==='images.unsplash.com').map(url=>url.toString());
    assert(failedImageURLs.length>0,'the failure must occur while retrieving the selected source images');
    assert.deepEqual(g.packs.map(record=>record.id),recordsBefore,'a failed fresh card must not consume source metadata; older records stay intact');

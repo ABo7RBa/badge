@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import sharp from 'sharp';
 import {acceptUnsplashPhoto,fetchUnsplashPair,trackUnsplashPair} from '../src/unsplash-source.js';
 import {filmIds,validArtwork,fetchFanartMovie} from '../src/fanart-source.js';
 import {fetchCategoryAssets} from '../src/image-sources.js';
@@ -64,12 +65,15 @@ const fallbackFilm=await fetchFanartMovie(new Set(),{...filmOptions,ids:['tt0816
  apiFetch:async url=>new URL(url).pathname.endsWith('tt0816692')?{ok:false,status:404}:{ok:true,json:async()=>movie}});
 assert.equal(fallbackFilm.sourceId,'fanart:movie:tt1375666|fanart:art:1|fanart:art:2');
 
-const wallhaven=cat=>({id:'a1b2c3',url:'https://wallhaven.cc/w/a1b2c3',category:cat,purity:'sfw',
- dimension_x:2560,dimension_y:1440,thumbs:{large:'https://th.wallhaven.cc/lg/a1/a1b2c3.jpg'}});
-for(const [cat,remote] of [['pc_wallpapers','general']]){
- const result=await fetchCategoryAssets(cat,new Set(),{apiFetch:async()=>({ok:true,json:async()=>({data:[wallhaven(remote)]})})});
- assert.equal(result.linkOnly,true);assert.equal(result.provider,'Wallhaven');assert.equal(result.category,cat);
-}
+const pcBytes=await sharp({create:{width:1920,height:1080,channels:3,background:'#234567'}}).png().toBuffer();
+const pcItem={id:'a1b2c3',url:'https://wallhaven.cc/w/a1b2c3',category:'general',purity:'sfw',
+ dimension_x:1920,dimension_y:1080,tags:[{name:'video games'}],
+ path:'https://w.wallhaven.cc/full/a1/wallhaven-a1b2c3.png'};
+const pc=await fetchCategoryAssets('pc_wallpapers',new Set(),{
+ apiFetch:async url=>({ok:true,json:async()=>({data:new URL(url).pathname.endsWith('/search')?[pcItem]:pcItem})}),
+ imageFetch:async()=>pcBytes});
+assert.equal(pc.provider,'Wallhaven');assert.equal(pc.id,'wallhaven:a1b2c3');
+assert.equal(pc.linkOnly,undefined);assert.deepEqual(pc.buffer,pcBytes);
 await assert.rejects(fetchCategoryAssets('unknown'),/غير مدعوم/);
 
 // Existing removed-source records stay preserved, but are excluded from publication.

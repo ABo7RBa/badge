@@ -3,11 +3,12 @@ import {cmds,ACTIONS} from './commands.js';
 import {guild,store,save,pack,packs,makeRoom,sent,addPack,pendingMoviePacks,saveFetchedMovie,samePhoto,migrateLegacySettings} from './db.js';
 import {renderCard,normalizeFromUpload,deleteCustom,visualHash} from './media.js';
 import {searchWallhaven} from './wallhaven-source.js';
+import {fetchPcWallpaper,fetchPcWallpaperById} from './pc-wallpapers.js';
 import {fetchCategoryAssets,SOURCE_CREDITS} from './image-sources.js';
 import {trackUnsplashPair} from './unsplash-source.js';
 import {isUnsplashRecord} from './unsplash-record.js';
 import {collectRecentPostIds,reconcileRoom} from './history.js';
-import {pcCollectionsMessage,validatePcWallpaperRoom} from './wallpaper-links.js';
+import {validatePcWallpaperRoom} from './wallpaper-links.js';
 import {randomUUID} from 'node:crypto';
 import {validatePair} from './quality-gate.js';
 import {APP_VERSION,sanitizeMovieReport,formatMovieReport,explainMovieReport,sanitizeMovieError} from './movie-diagnostics.js';
@@ -34,6 +35,21 @@ const rowFor=(id,bannerKey=null)=>new ActionRowBuilder().addComponents(
  imageActionButton('download',`sas:download:${id}${bannerKey?':'+bannerKey:''}`),
  imageActionButton('edit',`sas:edit:${id}${bannerKey?':'+bannerKey:''}`),
  imageActionButton('delete',`sas:delete:${id}${bannerKey?':'+bannerKey:''}`));
+function pcSeen(gid){
+ const g=guild(gid);
+ const previous=Object.values(g.rooms).flatMap(room=>[...(room.wallhavenUsedIds||[]),
+  ...(room.category==='pc_wallpapers'?[...(room.usedIds||[]),room.lastId]:[])]).filter(Boolean)
+  .map(id=>/^wh_[a-z0-9]{6}$/.test(id)?`wallhaven:${id.slice(3)}`:id);
+ return new Set([...previous,
+  ...g.packs.flatMap(p=>[p.sourceId,...(p.sourceIds||[])]).filter(Boolean)]);
+}
+function pcWallpaperPayload(item,controls=false){
+ const components=controls?[new ActionRowBuilder().addComponents(
+  imageActionButton('download',`sas:download:wh_${item.rawId}`),
+  imageActionButton('delete',`sas:delete:wh_${item.rawId}`))]:[];
+ return ui('',{files:[new AttachmentBuilder(item.buffer,{name:item.filename})],
+  embeds:[new EmbedBuilder().setImage(`attachment://${item.filename}`)],components});
+}
 const panel=()=>new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('sas:menu').setPlaceholder('اختر أمرًا من القائمة').addOptions(ACTIONS.map(([value,label,description])=>({value,label,description}))));
 const HOME=()=>ep('**✦ ABO 7RB**\nاختر أمرًا من القائمة:',{components:[panel()]});
 const chanRow=action=>new ActionRowBuilder().addComponents(new ChannelSelectMenuBuilder().setCustomId(`sas:channel:${action}`).addChannelTypes(ChannelType.GuildText).setPlaceholder('اختر الروم'));
@@ -63,12 +79,17 @@ function stateText(gid){
  const sources=Object.entries(g.fetchStatus||{}).map(([category,status])=>
   `${category}: ${status.state==='error'?'⚠️ '+status.error:status.state==='empty'?'لا توجد نتائج جديدة':'نجح آخر جلب'}`).join('\n');
  const postingErrors=Object.entries(g.rooms).filter(([,room])=>room.error).map(([cid,room])=>`⚠️ <#${cid}>: ${room.error}`).join('\n');
- const wallhaven=process.env.WALLHAVEN_ENABLED==='false'?'Wallhaven: معطل':'Wallhaven: معاينات الأنمي وخلفيات PC';
+ const wallhaven=process.env.WALLHAVEN_ENABLED==='false'?'Wallhaven: معطل':'Wallhaven: أنمي وخلفيات PC للألعاب والأنمي';
  return `**الحالة — V${APP_VERSION}**\nوضع النشر: من المواقع فقط\nالرومات: ${Object.keys(g.rooms).length}\nسجل أطقم المواقع: ${packs(gid).length}\nالنشر الافتراضي: 40 دقيقة\n${movieInfo}\n${keys}\n${wallhaven}\n${sources}\n${postingErrors}\n${roomText(gid)}`.slice(0,1950);
 }
 async function recoverPreviousPosts(client){
  let modified=false;
  for(const [gid,g] of Object.entries(store.guilds))for(const [cid,room] of Object.entries(g.rooms||{})){
+  if(room.category==='pc_wallpapers'){
+   const before=JSON.stringify([room.usedIds,room.wallhavenUsedIds,room.queue]);
+   reconcileRoom(room,[]);
+   if(before!==JSON.stringify([room.usedIds,room.wallhavenUsedIds,room.queue]))modified=true;
+  }
   try{
    const channel=await client.channels.fetch(cid);
    if(!channel?.messages?.fetch || channel.guildId!==gid)continue;
@@ -121,35 +142,27 @@ export async function post(client,gid,cid,{forced=false}={}){
   if(!stillCurrent())return cancelled;
   if(!channel||channel.guildId!==gid||!channel.isTextBased()||!channel.send)throw Error('الروم غير متاح');
   if(!channel.permissionsFor(client.user)?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.EmbedLinks]))throw Error('صلاحيات View Channel وSend Messages وEmbed Links مطلوبة');
-  if(category!=='pc_wallpapers'&&(!['girls','boys'].includes(category)||photoCards())&&
-    !channel.permissionsFor(client.user)?.has(PermissionFlagsBits.AttachFiles))throw Error('صلاحية Attach Files مطلوبة لنشر البطاقة');
-  let sourceFailure=null;
-  // PC wallpapers use the source preview and original page link.
-  if(r.category==='pc_wallpapers'&&process.env.WALLHAVEN_ENABLED!=='false') {
-   try{
-    const result=await withSourceLock(gid,async()=>{
+  if((!['girls','boys'].includes(category)||photoCards())&&
+    !channel.permissionsFor(client.user)?.has(PermissionFlagsBits.AttachFiles))throw Error('صلاحية Attach Files مطلوبة لإرسال الصور');
+  // PC originals are fetched and verified for this send, without a local library.
+  if(category==='pc_wallpapers') {
+   if(process.env.WALLHAVEN_ENABLED==='false')throw Error('مصدر Wallhaven معطل؛ فعّل WALLHAVEN_ENABLED=true');
+   return await withSourceLock(sourceLockKey(gid,category),async()=>{
     if(!stillCurrent())return cancelled;
-    const seen=new Set(Object.values(guild(gid).rooms).flatMap(room=>room.wallhavenUsedIds||[]));
-    const chosen=await searchWallhaven(r.category,seen,{seed:Math.floor(Date.now()/60000)%10000});
+    const chosen=await fetchPcWallpaper(pcSeen(gid),{seed:Math.floor(Date.now()/60000)%10000,shouldContinue:stillCurrent});
     if(!stillCurrent())return cancelled;
     if(chosen){
-     const embed=new EmbedBuilder();
-     if(showImageCredits())embed.setURL(chosen.sourceUrl).setDescription(`${chosen.width}×${chosen.height} • [عرض وتحميل من المصدر](${chosen.sourceUrl})`);
-     if(chosen.preview)embed.setImage(chosen.preview);
-     const actions=new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(chosen.sourceUrl).setLabel('فتح الخلفية'),
-      imageActionButton('delete',`sas:delete:wh_${chosen.rawId}`));
-     await channel.send({embeds:[embed],components:[actions],allowedMentions:{parse:[]}});
+     await channel.send(pcWallpaperPayload(chosen,true));
      r.wallhavenUsedIds??=[];r.wallhavenUsedIds.push(chosen.id);
      r.count=(r.count||0)+1;r.lastPostAt=Date.now();r.lastId=chosen.id;
      r.nextAt=Date.now()+(r.minutes||40)*EVERY;r.error=null;save();
-     return `✅ نشرت صورة جديدة برابط مصدرها من Wallhaven في <#${cid}>`;
+     return `✅ نشرت خلفية جديدة للألعاب أو الأنمي في <#${cid}>`;
     }
-     return null;
-    });
-    if(result)return result;
-   }catch(e){sourceFailure=err(e);console.warn('Wallhaven source failed:',sourceFailure);}
+    r.error='لا توجد خلفية ألعاب أو أنمي جديدة مناسبة من الموقع';
+    r.nextAt=Date.now()+Math.max(10,r.minutes||40)*EVERY;save();return r.error;
+   });
   }
+  let sourceFailure=null;
   let picked=null;
   const pairCategory=['girls','boys','movies','anime'].includes(r.category);
   if(pairCategory&&process.env.AUTO_FETCH!=='false'){
@@ -206,14 +219,9 @@ export async function post(client,gid,cid,{forced=false}={}){
  }catch(e){if(!stillCurrent())return cancelled;r.error=err(e);r.nextAt=Date.now()+5*EVERY;save();console.error('Post failed',gid,cid,e);return 'تعذر النشر: '+r.error;}
  finally{busy.delete(key);}
 }
-async function postPcCollectionLinks(client,gid,cid){
+async function postPcWallpaper(client,gid,cid){
  const room=currentRoom(gid,cid);validatePcWallpaperRoom(room);
- const channel=await client.channels.fetch(cid);
- if(!channel||channel.guildId!==gid||!channel.isTextBased()||!channel.send)throw Error('الروم غير متاح');
- if(!channel.permissionsFor(client.user)?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages]))throw Error('البوت يحتاج عرض الروم وإرسال الرسائل');
- // Authorized action: link to HTML pages only. Do not scrape or hotlink copyrighted images.
- await channel.send(ui(pcCollectionsMessage()));
- return `✅ أُرسلت روابط المجموعات إلى <#${cid}>. هذه روابط مجموعات الموقع.`;
+ return post(client,gid,cid,{forced:true});
 }
 async function scheduler(client){
  for(const [gid,g] of Object.entries(store.guilds))for(const [cid,r] of Object.entries(g.rooms||{})){
@@ -272,7 +280,7 @@ async function doImportImages(gid,category,force=false,{demand=false}={}){
    const reason=category==='movies'?explainMovieReport(movieReport):null;
    fetched('empty',reason);return reason?'لم يتم جلب أفلام: '+reason+'\n'+formatMovieReport(movieReport):'لا توجد صورة جديدة مناسبة لهذا القسم؛ لن أكرر الصور أو آخذها من قسم آخر.';
   }
-  if(external.linkOnly){fetched('success');return `🔎 ${category}: ${external.sourceUrl}\nمعاينة Wallhaven تُنشر تلقائيًا في الروم المرتبط بهذا القسم. تُجلب الخلفيات مباشرة من الموقع.`;}
+  if(category==='pc_wallpapers'){fetched('success');return pcWallpaperPayload(external);}
   const id=pending.at(-1)?.id||'sas-'+randomUUID().replaceAll('-','').slice(0,14);
   if(external.remote){
    const record=addPack(gid,{...external,id,category,kind:'profile',importedAutomatically:true,categoryVerified:true});
@@ -318,13 +326,8 @@ async function previewFromWebsite(gid,category,{sourceLockHeld=false}={}){
   previewFromWebsite(gid,category,{sourceLockHeld:true}));
  if(!guild(gid).categories[category])throw Error('التصنيف غير موجود');
  if(category==='pc_wallpapers'){
-  if(process.env.WALLHAVEN_ENABLED==='false')throw Error('Wallhaven معطل في الإعدادات');
-  const item=await searchWallhaven(category,new Set(),{seed:Math.floor(Date.now()/60000)%10000});
-  if(!item)return ui('لا توجد خلفية مناسبة من الموقع');
-  const embed=new EmbedBuilder();
-  if(showImageCredits())embed.setURL(item.sourceUrl);
-  if(item.preview)embed.setImage(item.preview);
-  return ui('',{embeds:[embed]});
+  const result=await importImages(gid,category,true,{demand:true});
+  return typeof result==='string'?ui(result):result;
  }
  const before=new Set(guild(gid).packs.map(p=>p.id));
  const previousFetchId=guild(gid).fetchStatus?.[category]?.fetchId;
@@ -393,10 +396,11 @@ async function commands(i,client){
   await i.deferReply(ep(''));
   const cat=i.options.getString('category',true);
   if(cat==='movies')return i.editReply('قسم الأفلام يستخدم Fanart.tv؛ اختر قسمًا آخر لاستكشاف Wallhaven.');
+  if(cat==='pc_wallpapers')return i.editReply(await previewFromWebsite(gid,cat));
   const example=await searchWallhaven(cat,new Set(),{seed:Math.floor(Date.now()/60000)%10000});
   return i.editReply(example?`🔎 ${cat}: ${example.sourceUrl}\nهذه معاينة مصدر، وليست أفتارًا أو بنرًا معتمدًا للنشر.`:'لم أجد نتيجة جديدة مطابقة لفلاتر المصدر.');
  }
- if(name==='مجموعات-4k'){await i.deferReply(ep(''));return i.editReply(await postPcCollectionLinks(client,gid,channel.id));}
+ if(name==='مجموعات-4k'){await i.deferReply(ep(''));return i.editReply(await postPcWallpaper(client,gid,channel.id));}
  if(name==='مصادر')return i.reply(ep(SOURCE_CREDITS));
  if(name==='جلب-صور'){await i.deferReply(ep(''));return i.editReply(await importImages(gid,i.options.getString('category',true),true));}
  return i.reply(ep('هذا الأمر أزيل في النسخة الجديدة. افتح /لوحة-التحكم لاختيار الأوامر الحالية.'));
@@ -414,7 +418,7 @@ async function menus(i,client){
   if(action==='credits')return i.update(ui(SOURCE_CREDITS,{components:[panel()]}));
   if(action==='preview')return i.update(ui('اختر تصنيف المعاينة:',{components:[catRow(gid,'preview')]}));
   if(action==='fetch')return i.update(ui('اختر التصنيف الذي تريد جلب الصور له:',{components:[catRow(gid,'fetch')]}));
-  if(action==='wallhaven')return i.update(ui('اختر تصنيفًا لاستعراض رابط من Wallhaven (لا ينشر تلقائيًا):',{components:[catRow(gid,'wallhaven')]}));
+  if(action==='wallhaven')return i.update(ui('اختر التصنيف لمعاينة PC أو استكشاف صور Wallhaven:',{components:[catRow(gid,'wallhaven')]}));
   return i.update(ui('اختر الروم:',{components:[chanRow(action)]}));
  }
  if(id.startsWith('sas:channel:')){
@@ -427,7 +431,7 @@ async function menus(i,client){
   }
   if(action==='unbind'){delete guild(gid).rooms[cid];save();return i.update(ui('✅ تم الفصل',{components:[panel()]}));}
   if(action==='post'){await i.deferUpdate();const res=await post(client,gid,cid,{forced:true});return i.editReply(ui(res,{components:[panel()]}));}
-  if(action==='4k-links'){await i.deferUpdate();const res=await postPcCollectionLinks(client,gid,cid);return i.editReply(ui(res,{components:[panel()]}));}
+  if(action==='4k-links'){await i.deferUpdate();const res=await postPcWallpaper(client,gid,cid);return i.editReply(ui(res,{components:[panel()]}));}
   return i.update(ui('هذا الخيار أزيل. اختر أمرًا من القائمة الجديدة:',{components:[panel()]}));
  }
  if(id.startsWith('sas:category:')){
@@ -437,10 +441,11 @@ async function menus(i,client){
    guild(gid).rooms[cid]=makeRoom(cat,40);save();return i.update(ui(`✅ ربطت <#${cid}> بقسم ${cat} — كل 40 دقيقة`,{components:[panel()]}));
   }
   if(action==='preview'){await i.deferUpdate();return i.editReply({...await previewFromWebsite(gid,cat),components:[panel()]});}
-  if(action==='fetch'){await i.deferUpdate();const res=await importImages(gid,cat,true);return i.editReply(ui(res,{components:[panel()]}));}
+  if(action==='fetch'){await i.deferUpdate();const res=await importImages(gid,cat,true);return i.editReply(typeof res==='string'?ui(res,{components:[panel()]}):{...res,components:[panel()]});}
   if(action==='wallhaven'){
    await i.deferUpdate();
    if(cat==='movies')return i.editReply(ui('قسم الأفلام يستخدم Fanart.tv؛ اختر قسمًا آخر لاستكشاف Wallhaven.',{components:[panel()]}));
+   if(cat==='pc_wallpapers')return i.editReply({...await previewFromWebsite(gid,cat),components:[panel()]});
    const example=await searchWallhaven(cat,new Set(),{seed:Math.floor(Date.now()/60000)%10000});
    return i.editReply(ui(example?`🔎 ${cat}: ${example.sourceUrl}\nهذا رابط مصدر، وليس طقمًا متناسقًا معتمدًا للنشر.`:'لا توجد نتيجة مناسبة بهذا البحث.',{components:[panel()]}));
   }
@@ -462,6 +467,12 @@ async function buttons(i,client){
   const confirm=new ActionRowBuilder().addComponents(new ButtonBuilder()
     .setCustomId(`sas:confirm:${i.message.id}`).setLabel('تأكيد حذف المنشور').setStyle(ButtonStyle.Danger));
   return i.reply(ep('هل تريد حذف منشور الخلفية من الروم؟',{components:[confirm]}));
+ }
+ if(action==='download'&&/^wh_[a-z0-9]{6}$/i.test(id)){
+  await i.deferReply(ep(''));
+  const item=await fetchPcWallpaperById(id.slice(3));
+  if(!item)throw Error('لم تعد هذه الخلفية متاحة للتنزيل من الموقع');
+  return i.editReply(ui('',{files:[new AttachmentBuilder(item.buffer,{name:item.filename})],components:[]}));
  }
  const p=pack(i.guildId,id);
  if(!p)return i.reply(ep('ملفات هذه الصورة لم تعد متاحة.'));

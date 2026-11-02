@@ -27,6 +27,7 @@ try {
   const svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+width+'" height="'+height+'">'+tiles.join('')+'</svg>';
   await sharp(Buffer.from(svg)).png().toFile(path.join(tmp,kind+'-'+variant+'.png'));
  }
+ await sharp(path.join(tmp,'banner-1.png')).resize(1920,1080).png().toFile(path.join(tmp,'pc.png'));
  const output=execFileSync(process.execPath,['--input-type=module','-'],{cwd:tmp,encoding:'utf8',input:`
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -38,6 +39,7 @@ process.env.FANART_MOVIE_IDS='tt1375666';
 const originalNow=Date.now;let now=originalNow();Date.now=()=>now;
 let generation=0;const fixtures={};
 for(let n=0;n<8;n++)for(const kind of ['avatar','banner'])fixtures[kind+'-'+n]=await fs.readFile(kind+'-'+n+'.png');
+const pc=await fs.readFile('pc.png');
 const apiCalls=[];
 globalThis.fetch=async(raw,opts)=>{
  const u=new URL(raw);apiCalls.push(u);
@@ -64,8 +66,13 @@ globalThis.fetch=async(raw,opts)=>{
   movieposter:[{id:'51',url:'https://assets.fanart.tv/fanart/movies/27205/poster.png'}],
   moviebackground:[{id:'52',url:'https://assets.fanart.tv/fanart/movies/27205/background.png'}]});
  if(u.hostname==='assets.fanart.tv')return new Response(fixtures[(u.pathname.endsWith('poster.png')?'avatar':'banner')+'-3'],{headers:{'content-type':'image/png'}});
- if(u.hostname==='w.wallhaven.cc')return new Response(fixtures[(u.pathname.includes('a1b2c3')?'avatar':'banner')+'-1'],{headers:{'content-type':'image/png'}});
+ if(u.hostname==='w.wallhaven.cc'){
+  assert.equal(opts?.headers?.Authorization,undefined);assert.equal(opts?.headers?.['X-API-Key'],undefined);assert.equal(opts?.redirect,'error');
+  return new Response(u.pathname.includes('p1c2g3')?pc:fixtures[(u.pathname.includes('a1b2c3')?'avatar':'banner')+'-1'],{headers:{'content-type':'image/png'}});
+ }
  if(u.hostname==='wallhaven.cc'){
+  if(u.pathname==='/api/v1/w/p1c2g3')return Response.json({data:{id:'p1c2g3',url:'https://wallhaven.cc/w/p1c2g3',category:'general',purity:'sfw',dimension_x:2560,dimension_y:1440,tags:[{name:'video games'}],path:'https://w.wallhaven.cc/full/p1/wallhaven-p1c2g3.jpg'}});
+  if(u.searchParams.get('atleast')==='1920x1080')return Response.json({data:u.searchParams.get('q')==='anime'?[]:[{id:'p1c2g3',url:'https://wallhaven.cc/w/p1c2g3',category:'general',purity:'sfw',dimension_x:2560,dimension_y:1440,path:'https://w.wallhaven.cc/full/p1/wallhaven-p1c2g3.jpg',thumbs:{large:'https://th.wallhaven.cc/lg/p1/p1c2g3.jpg'}}]});
   const anime=u.searchParams.get('categories')==='010',avatar=anime&&u.searchParams.get('atleast')==='600x600';
   const id=avatar?'a1b2c3':'d4e5f6';
   return Response.json({data:[{id,url:'https://wallhaven.cc/w/'+id,
@@ -124,8 +131,13 @@ for(const [category,item] of Object.entries(active)){
  const embed=sent[0].payload.embeds[0].toJSON();
  for(const field of ['title','description','footer'])assert.equal(embed[field],undefined,'automatic posts have no visible captions');
  if(category==='pc_wallpapers'){
-  assert.equal(embed.url,undefined);assert(embed.image.url.includes('th.wallhaven.cc'));
-  assert.equal(item.room.wallhavenUsedIds.length,1);
+  assert.equal(embed.url,undefined);assert.equal(sent[0].payload.files.length,1);
+  assert.equal(embed.image.url,'attachment://'+sent[0].payload.files[0].name);assert(sent[0].payload.files[0].attachment.equals(pc));
+  const info=await (await import('sharp')).default(sent[0].payload.files[0].attachment).metadata();assert.equal(info.width,1920);assert.equal(info.height,1080);
+  const buttons=sent[0].payload.components[0].toJSON().components;
+  assert.equal(buttons.length,2);assert.equal(buttons[0].custom_id,'sas:download:wh_p1c2g3');assert.equal(buttons[1].custom_id,'sas:delete:wh_p1c2g3');assert(buttons.every(button=>!button.url));
+  assert.deepEqual(item.room.wallhavenUsedIds,['wallhaven:p1c2g3']);
+  assert(apiCalls.some(url=>url.pathname==='/api/v1/w/p1c2g3'));assert(!apiCalls.some(url=>url.hostname==='th.wallhaven.cc'));
  }else if(category==='movies'||category==='anime'){
   assert(sent[0].payload.files[0].attachment.length>1000);assert.equal(embed.description,undefined);
   assert.equal(item.g.fetchStatus[category].state,'success');
