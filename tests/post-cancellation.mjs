@@ -4,15 +4,19 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
+import {generatedPair} from './fixtures.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const tmp=await fs.mkdtemp(path.join(os.tmpdir(),'abo-cancel-'));
 try{
  await fs.cp(path.join(root,'src'),path.join(tmp,'src'),{recursive:true});
  await fs.writeFile(path.join(tmp,'package.json'),'{"type":"module"}');
  await fs.symlink(path.join(root,'node_modules'),path.join(tmp,'node_modules'),'dir');
+ const fixture=await generatedPair(19);await fs.writeFile(path.join(tmp,'avatar.png'),fixture.avatar);await fs.writeFile(path.join(tmp,'banner.png'),fixture.banner);
  const result=execFileSync(process.execPath,['--input-type=module','-'],{cwd:tmp,encoding:'utf8',input:`
 import assert from 'node:assert/strict';
 import {post} from './src/bot.js';
+import fs from 'node:fs/promises';
+const av=await fs.readFile('avatar.png'),bn=await fs.readFile('banner.png');
 import {guild,packs,makeRoom} from './src/db.js';
 process.env.AUTO_FETCH='true';process.env.WALLHAVEN_ENABLED='true';
 const photo=(id,banner=false)=>({id,width:banner?2400:900,height:banner?1350:1200,color:'#30343a',
@@ -21,7 +25,7 @@ const photo=(id,banner=false)=>({id,width:banner?2400:900,height:banner?1350:120
  links:{html:'https://unsplash.com/photos/'+id,download_location:'https://api.unsplash.com/photos/'+id+'/download'},
  user:{name:'Test Artist',links:{html:'https://unsplash.com/@testartist'}}});
 let number=0;
-for(const stage of ['search','download'])for(const action of ['pause','unbind','rebind','stop-start']){
+for(const stage of ['search','image','download'])for(const action of ['pause','unbind','rebind','stop-start']){
  const gid='cancel-'+number++,g=guild(gid),cid='room';
  process.env.UNSPLASH_ACCESS_KEY='test-'+gid;
  const room=g.rooms[cid]=makeRoom('girls');room.usedIds=packs(gid,'girls').map(p=>p.id);
@@ -29,6 +33,10 @@ for(const stage of ['search','download'])for(const action of ['pause','unbind','
  const ready=new Promise(resolve=>{reached=resolve;}),gate=new Promise(resolve=>{release=resolve;});
  globalThis.fetch=async raw=>{
   const u=new URL(raw),search=u.pathname==='/search/photos';
+  if(u.hostname==='images.unsplash.com'){
+   if(stage==='image'){reached();await gate;}
+   return new Response(u.pathname.endsWith('banner01')?bn:av,{headers:{'content-type':'image/png'}});
+  }
   if(u.hostname!=='api.unsplash.com')throw Error('Unexpected network');
   if((stage==='search'&&search)||(stage==='download'&&!search)){reached();await gate;}
   return Response.json(search?{results:[photo(u.searchParams.get('orientation')==='landscape'?'banner01':'avatar01',u.searchParams.get('orientation')==='landscape')]}:{url:'https://images.unsplash.com/photo-unused'});
@@ -43,7 +51,7 @@ for(const stage of ['search','download'])for(const action of ['pause','unbind','
  const current=g.rooms[cid],nextAt=current?.nextAt;
  release();assert.match(await pending,/أُلغي/);
  assert.equal(messages.length,0,stage+' '+action);assert.equal(room.count,0);
- assert.deepEqual(room.usedIds,originalUsed);assert.equal(room.error,null);
+ assert.deepEqual(room.usedIds,originalUsed);assert.equal(room.error,null);assert.equal(g.packs.length,0,'cancelled cards do not consume an unpublished source pair');
  if(current){assert.equal(current.nextAt,nextAt);assert.equal(current.count,0);}
 }
 // Wallhaven uses its own awaited search path, which must respect a paused room too.

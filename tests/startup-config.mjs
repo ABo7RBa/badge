@@ -12,6 +12,9 @@ const privateValues={DISCORD_TOKEN:'dummy-token-never-display',UNSPLASH_ACCESS_K
 const configured=run(privateValues);assert.equal(configured.status,0,configured.stdout);
 for(const value of Object.values(privateValues))assert(!configured.stdout.includes(value));
 assert.equal(run({...privateValues,AUTO_FETCH:'yes'}).status,1);
+assert.equal(run({...privateValues,PHOTO_DISPLAY:'grid'}).status,1);
+assert.equal(run({...privateValues,PHOTO_DISPLAY:'source'}).status,0);
+assert.equal(run({...privateValues,PHOTO_DISPLAY:'card'}).status,0);
 assert.equal(run({...privateValues,GUILD_ID:'wrong'}).status,1);
 assert.equal(run({...privateValues,FANART_API_KEY:'YOUR_FANART_API_KEY'}).status,1);
 assert.equal(run({...privateValues,FANART_MOVIE_IDS:'not-an-imdb-id'}).status,1);

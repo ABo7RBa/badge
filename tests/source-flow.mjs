@@ -1,4 +1,4 @@
-// Test remote Unsplash pairs and local Fanart cards in isolated storage.
+// Test source-fetched composite cards and the optional Unsplash source view.
 // No provider traffic, Discord sends or user state are touched.
 import assert from 'node:assert/strict';
 process.env.SOURCE_ONLY='false'; // ignored legacy flag
@@ -29,6 +29,7 @@ import {Collection,ButtonStyle} from 'discord.js';
 import {guild,packs,makeRoom} from './src/db.js';
 process.env.UNSPLASH_ACCESS_KEY='test-key';process.env.FANART_API_KEY='test-key';
 process.env.FANART_MOVIE_IDS='tt1375666';process.env.WALLHAVEN_ENABLED='true';
+delete process.env.PHOTO_DISPLAY; // Composite cards are the default, including on old .env files.
 const av=await fs.readFile('avatar.png'),bn=await fs.readFile('banner.png');
 for(const key of ['DOWNLOAD_EMOJI_ID','EDIT_EMOJI_ID','DELETE_EMOJI_ID'])delete process.env[key];
 const registered=new Collection(),iconImages=[];
@@ -59,7 +60,13 @@ globalThis.fetch=async(raw,opts)=>{
   return Response.json({total:1,total_pages:5,results:[photo(id,
    landscape?'City street train station and cloudy grass field in black and white at night':male?'Man in black hoodie from behind on a city street at night':'Woman portrait outdoors',landscape)]});
  }
- if(u.hostname==='images.unsplash.com')throw Error('Unsplash images must be hotlinked, never fetched or rehosted');
+ if(u.hostname==='images.unsplash.com'){
+  const id=u.pathname.slice('/photo-'.length);
+  assert.equal(u.searchParams.get('ixid'),'original-'+id,'image retrieval must preserve the API-provided URL');
+  assert.equal(opts?.headers?.Authorization,undefined,'API credentials must never be sent to the image host');
+  assert.equal(opts?.redirect,'error');
+  return new Response(id==='scene0001'?bn:av,{headers:{'content-type':'image/png'}});
+ }
  if(u.hostname==='webservice.fanart.tv')return Response.json({imdb_id:'tt1375666',name:'Inception',
   movieposter:[{id:'1',url:'https://assets.fanart.tv/fanart/movies/27205/poster.png'}],
   moviebackground:[{id:'2',url:'https://assets.fanart.tv/fanart/movies/27205/background.png'}]});
@@ -105,17 +112,42 @@ for(const category of ['girls','boys','movies','anime','pc_wallpapers']){
   assert(messages[0].files[0].attachment.length>1000);assert.equal(embed.description,undefined);
   const again=await importImages(gid,category,true);assert(!again.startsWith('✅'),again);
  }else{
-  assert(imported.remote);assert(!messages[0].files,'remote pairs must not be rehosted as attachments');
-  assert.equal(embed.image.url,imported.bannerURL);assert.equal(embed.thumbnail.url,imported.avatarURL);
-  assert(embed.image.url.includes('ixid=original-'));assert(embed.thumbnail.url.includes('ixid=original-'));
+  assert(imported.remote,'the saved record remains source metadata, not a photo library entry');
+  assert.equal(messages[0].files.length,1,'boys/girls publish one composite card');
+  const cardInfo=await (await import('sharp')).default(messages[0].files[0].attachment).metadata();
+  assert.equal(cardInfo.format,'png');assert.equal(cardInfo.width,1080);assert.equal(cardInfo.height,700);
+  assert(embed.image.url.startsWith('attachment://'));assert.equal(embed.thumbnail,undefined);
   assert.equal(embed.description,undefined);assert.equal(embed.title,undefined);
   assert.equal(imported.credits.avatar.name,'Flow Test Artist');
+  assert.equal(imported.avatar,undefined);assert.equal(imported.banner,undefined,'remote records keep source URLs only');
+  const sourceImageRequests=requested.filter(u=>u.hostname==='images.unsplash.com');
+  assert(sourceImageRequests.some(u=>u.toString()===imported.avatarURL));
+  assert(sourceImageRequests.some(u=>u.toString()===imported.bannerURL));
   assert.equal(requested.filter(u=>u.pathname.endsWith('/download')).length,tracksBefore+2);
-  assert.equal(requested.some(u=>u.hostname==='images.unsplash.com'),false);
+  const persisted=await fs.readdir('storage/packs/'+gid).catch(error=>{if(error.code==='ENOENT')return [];throw error;});
+  assert.deepEqual(persisted,[],'transient source images must not become a stored publication fallback');
   const again=await importImages(gid,category,true);assert(!again.startsWith('✅'),again);
   assert.equal(requested.filter(u=>u.pathname.endsWith('/download')).length,tracksBefore+2);
  }
 }
+// The explicitly selected source view retains original hotlinks and thumbnail,
+// without downloading source image bytes, and still tracks before publishing.
+process.env.PHOTO_DISPLAY='source';
+for(const category of ['girls','boys']){
+ const gid='source-view-'+category,g=guild(gid),room=g.rooms.room=makeRoom(category);
+ const imagesBefore=requested.filter(u=>u.hostname==='images.unsplash.com').length;
+ const tracksBefore=requested.filter(u=>u.pathname.endsWith('/download')).length;
+ const messages=[];
+ const client={user:{id:'bot'},channels:{fetch:async()=>({guildId:gid,isTextBased:()=>true,permissionsFor:()=>({has:()=>true}),send:async payload=>{
+  assert.equal(requested.filter(u=>u.pathname.endsWith('/download')).length,tracksBefore+2);messages.push(payload);
+ }})}};
+ const result=await post(client,gid,'room',{forced:true});assert.equal(messages.length,1,result);assert.equal(room.count,1);
+ const embed=messages[0].embeds[0].toJSON(),record=packs(gid,category)[0];
+ assert(!messages[0].files);assert.equal(embed.image.url,record.bannerURL);assert.equal(embed.thumbnail.url,record.avatarURL);
+ assert.equal(embed.description,undefined);assert.equal(embed.title,undefined);
+ assert.equal(requested.filter(u=>u.hostname==='images.unsplash.com').length,imagesBefore);
+}
+delete process.env.PHOTO_DISPLAY;
 // Optional icon overrides and an unavailable emoji API must not break buttons.
 process.env.DOWNLOAD_EMOJI_ID='987654321098765432';
 assert.equal(imageActionButton('download','sas:download:override').toJSON().emoji.id,process.env.DOWNLOAD_EMOJI_ID);
@@ -126,7 +158,7 @@ for(const action of ['download','edit','delete']){
  const fallback=imageActionButton(action,'sas:'+action+':fallback').toJSON();
  assert.equal(fallback.style,ButtonStyle.Secondary);assert(fallback.label);assert.equal(fallback.emoji,undefined);
 }
-console.log('PASS: monochrome application icons, reuse, override/fallback and five source routes, remote Unsplash hotlinks/attribution/selection tracking, local Fanart rendering, and saved publish state');
+console.log('PASS: monochrome application icons, reuse, override/fallback and five source routes, Unsplash composite cards/source view/selection tracking, local Fanart rendering, and saved publish state');
 `});
  process.stdout.write(output);assert(output.includes('PASS:'));
 } finally {await fs.rm(tmp,{recursive:true,force:true});}

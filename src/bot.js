@@ -13,6 +13,9 @@ import {validatePair} from './quality-gate.js';
 import {imageActionButton,setupImageButtonEmojis} from './button-icons.js';
 // Optional attribution display; image-only messages are the requested default.
 const showImageCredits=()=>process.env.SHOW_IMAGE_CREDITS==='true';
+const photoCards=()=>process.env.PHOTO_DISPLAY!=='source';
+const lockedCategory=category=>category==='movies'||photoCards()&&['girls','boys'].includes(category);
+const sourceLockKey=(gid,category)=>'publish:'+gid+':'+category;
 const EVERY=60_000;const busy=new Set();const processingFetch=new Map();
 const sourceQueue=new Map();
 async function withSourceLock(key,operation){
@@ -58,8 +61,9 @@ function stateText(gid){
  const keys=`Unsplash: ${process.env.UNSPLASH_ACCESS_KEY?'مفتاح موجود':'⚠️ يحتاج UNSPLASH_ACCESS_KEY'} • Fanart.tv: ${process.env.FANART_API_KEY?'مفتاح موجود':'⚠️ يحتاج FANART_API_KEY'}`;
  const sources=Object.entries(g.fetchStatus||{}).map(([category,status])=>
   `${category}: ${status.state==='error'?'⚠️ '+status.error:status.state==='empty'?'لا توجد نتائج جديدة':'نجح آخر جلب'}`).join('\n');
+ const postingErrors=Object.entries(g.rooms).filter(([,room])=>room.error).map(([cid,room])=>`⚠️ <#${cid}>: ${room.error}`).join('\n');
  const wallhaven=process.env.WALLHAVEN_ENABLED==='false'?'Wallhaven: معطل':'Wallhaven: معاينات الأنمي وخلفيات PC';
- return `**الحالة**\nوضع النشر: من المواقع فقط\nالرومات: ${Object.keys(g.rooms).length}\nسجل أطقم المواقع: ${packs(gid).length}\nالنشر الافتراضي: 40 دقيقة\n${movieInfo}\n${keys}\n${wallhaven}\n${sources}\n${roomText(gid)}`.slice(0,1950);
+ return `**الحالة**\nوضع النشر: من المواقع فقط\nالرومات: ${Object.keys(g.rooms).length}\nسجل أطقم المواقع: ${packs(gid).length}\nالنشر الافتراضي: 40 دقيقة\n${movieInfo}\n${keys}\n${wallhaven}\n${sources}\n${postingErrors}\n${roomText(gid)}`.slice(0,1950);
 }
 async function recoverPreviousPosts(client){
  let modified=false;
@@ -91,6 +95,14 @@ export function unsplashEmbeds(record){
  }
  return [embed];
 }
+function discardUnsentPhoto(gid,record){
+ if(!record?.remote)return;
+ const g=guild(gid);
+ if(Object.values(g.rooms).some(room=>room.lastId===record.id||room.usedIds?.includes(record.id)))return;
+ g.packs=g.packs.filter(p=>p.id!==record.id);
+ if(g.fetchStatus?.[record.category]?.recordId===record.id)g.fetchStatus[record.category].recordId=null;
+ save();
+}
 export async function post(client,gid,cid,{forced=false}={}){
  const key=gid+':'+cid;if(busy.has(key))return 'يوجد نشر قيد التنفيذ';
  const r=currentRoom(gid,cid);
@@ -102,10 +114,14 @@ export async function post(client,gid,cid,{forced=false}={}){
  busy.add(key);
  try{
   const publish=async()=>{
+  let newPhoto=null,delivered=false;
+  try{
   const channel=await client.channels.fetch(cid);
   if(!stillCurrent())return cancelled;
   if(!channel||channel.guildId!==gid||!channel.isTextBased()||!channel.send)throw Error('الروم غير متاح');
   if(!channel.permissionsFor(client.user)?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.EmbedLinks]))throw Error('صلاحيات View Channel وSend Messages وEmbed Links مطلوبة');
+  if(category!=='pc_wallpapers'&&(!['girls','boys'].includes(category)||photoCards())&&
+    !channel.permissionsFor(client.user)?.has(PermissionFlagsBits.AttachFiles))throw Error('صلاحية Attach Files مطلوبة لنشر البطاقة');
   let sourceFailure=null;
   // PC wallpapers use the source preview and original page link.
   if(r.category==='pc_wallpapers'&&process.env.WALLHAVEN_ENABLED!=='false') {
@@ -138,7 +154,7 @@ export async function post(client,gid,cid,{forced=false}={}){
   if(pairCategory&&process.env.AUTO_FETCH!=='false'){
     const before=new Set(guild(gid).packs.map(p=>p.id));
     const previousFetchId=guild(gid).fetchStatus?.[r.category]?.fetchId;
-    await importImages(gid,r.category,forced&&category==='movies',{demand:true,movieLockHeld:category==='movies'});
+    await importImages(gid,r.category,forced&&lockedCategory(category),{demand:true,sourceLockHeld:lockedCategory(category)});
     const status=guild(gid).fetchStatus?.[r.category];
     if(status?.state==='success'&&status.recordId&&(category==='movies'?status.fetchId&&status.fetchId!==previousFetchId:!before.has(status.recordId))){
      const fresh=pack(gid,status.recordId);
@@ -148,6 +164,7 @@ export async function post(client,gid,cid,{forced=false}={}){
     }
    }else if(pairCategory)sourceFailure='الجلب معطل؛ فعّل AUTO_FETCH=true للنشر من المواقع';
    else if(process.env.WALLHAVEN_ENABLED==='false')sourceFailure='مصدر Wallhaven معطل؛ فعّل WALLHAVEN_ENABLED=true';
+  if(picked?.remote&&photoCards())newPhoto=picked;
   if(!stillCurrent())return cancelled;
   if(!picked){
    const status=guild(gid).fetchStatus?.[r.category];
@@ -156,7 +173,7 @@ export async function post(client,gid,cid,{forced=false}={}){
    r.error=reason||(category==='movies'?'لم أجد ملصقًا وبنرًا جديدين؛ راجع FANART_MOVIE_IDS أو أضف أفلامًا أخرى':'لم يعثر المصدر على صور جديدة مناسبة لقسم '+r.category);save();
    return reason?'تعذر جلب صور جديدة: '+reason:'لا توجد صور جديدة؛ توقفت دورة التكرار حتى تتوفر صور أخرى';
   }
-  if(picked.remote){
+  if(picked.remote&&!photoCards()){
    await trackUnsplashPair(picked);
    if(!stillCurrent())return cancelled;
    await channel.send({embeds:unsplashEmbeds(picked),components:[rowFor(picked.id)],allowedMentions:{parse:[]}});
@@ -166,21 +183,25 @@ export async function post(client,gid,cid,{forced=false}={}){
   // Render only the two images returned together by the website adapter.
   const output=await renderCard(picked);
   if(!stillCurrent())return cancelled;
+  if(picked.remote){await trackUnsplashPair(picked);if(!stillCurrent())return cancelled;}
   const credit=new EmbedBuilder()
     .setImage(`attachment://${output.filename}`);
-  if(showImageCredits()&&picked.sourceUrl&&picked.sourceIds?.length) {
+  if(showImageCredits()&&picked.remote)credit.setDescription(unsplashEmbeds(picked)[0].data.description);
+  else if(showImageCredits()&&picked.sourceUrl&&picked.sourceIds?.length) {
    const creditText=String(picked.credit||'').replace(/[\[\]()*_`]/g,'').slice(0,180);
    const links=[`[مصدر الأفتار](${picked.sourceUrl})`,picked.sourceBannerUrl?`[مصدر البنر](${picked.sourceBannerUrl})`:null].filter(Boolean).join(' • ');
    credit.setDescription(`${links}\n${creditText}\nالترخيص: ${String(picked.license||'').slice(0,160)}`);
   }
   await channel.send({files:[new AttachmentBuilder(output.buffer,{name:output.filename})],embeds:[credit],components:[rowFor(picked.id)],allowedMentions:{parse:[]}});
+  delivered=true;
   if(category==='movies'){
    const original=guild(gid).packs.find(p=>p.id===picked.id);
    if(original){original.deliveryState='published';original.publishedAt=Date.now();}
   }
   sent(r,picked.id);save();return `تم النشر في <#${cid}>`;
+  }finally{if(newPhoto&&!delivered)discardUnsentPhoto(gid,newPhoto);}
   };
-  return await (category==='movies'?withSourceLock('movies:'+gid,publish):publish());
+  return await (lockedCategory(category)?withSourceLock(sourceLockKey(gid,category),publish):publish());
  }catch(e){if(!stillCurrent())return cancelled;r.error=err(e);r.nextAt=Date.now()+5*EVERY;save();console.error('Post failed',gid,cid,e);return 'تعذر النشر: '+r.error;}
  finally{busy.delete(key);}
 }
@@ -200,8 +221,8 @@ async function scheduler(client){
  }
 }
 export function importImages(gid,category,force=false,options={}){
- if(category==='movies'&&!options.movieLockHeld)return withSourceLock('movies:'+gid,()=>
-  importImages(gid,category,force,{...options,movieLockHeld:true}));
+ if(lockedCategory(category)&&!options.sourceLockHeld)return withSourceLock(sourceLockKey(gid,category),()=>
+  importImages(gid,category,force,{...options,sourceLockHeld:true}));
  const key=gid+':'+category;
  if(processingFetch.has(key))return processingFetch.get(key);
  const task=doImportImages(gid,category,force,options).finally(()=>processingFetch.delete(key));
@@ -285,7 +306,9 @@ async function setupFiveRooms(i){
  return `✅ تم تجهيز الأقسام الخمسة.\nأنشئت ${made.length} روم، واستُخدم ${reused.length} روم موجود.\n`+
  Object.entries(mapped).map(([category,id])=>`• <#${id}> — ${category}`).join('\n');
 }
-async function previewFromWebsite(gid,category){
+async function previewFromWebsite(gid,category,{sourceLockHeld=false}={}){
+ if(lockedCategory(category)&&!sourceLockHeld)return withSourceLock(sourceLockKey(gid,category),()=>
+  previewFromWebsite(gid,category,{sourceLockHeld:true}));
  if(!guild(gid).categories[category])throw Error('التصنيف غير موجود');
  if(category==='pc_wallpapers'){
   if(process.env.WALLHAVEN_ENABLED==='false')throw Error('Wallhaven معطل في الإعدادات');
@@ -298,13 +321,15 @@ async function previewFromWebsite(gid,category){
  }
  const before=new Set(guild(gid).packs.map(p=>p.id));
  const previousFetchId=guild(gid).fetchStatus?.[category]?.fetchId;
- const result=await importImages(gid,category,false,{demand:true});
+ const result=await importImages(gid,category,false,{demand:true,sourceLockHeld});
  const status=guild(gid).fetchStatus?.[category];
  const p=status?.state==='success'&&(category==='movies'?status.fetchId&&status.fetchId!==previousFetchId:!before.has(status.recordId))?pack(gid,status.recordId):null;
  if(!p)return ui(result);
- if(p.remote)return ui('',{embeds:unsplashEmbeds(p)});
- const out=await renderCard(p);
- return ui('',{files:[new AttachmentBuilder(out.buffer,{name:out.filename})]});
+ if(p.remote&&!photoCards())return ui('',{embeds:unsplashEmbeds(p)});
+ try{
+  const out=await renderCard(p);
+  return ui('',{files:[new AttachmentBuilder(out.buffer,{name:out.filename})]});
+ }catch(error){if(p.remote)discardUnsentPhoto(gid,p);throw error;}
 }
 async function commands(i,client){
  const name=i.commandName,gid=i.guildId,channel=i.options.getChannel('channel');
@@ -405,7 +430,7 @@ async function buttons(i,client){
  const p=pack(i.guildId,id);
  if(!p)return i.reply(ep('ملفات هذه الصورة لم تعد متاحة.'));
  if(action==='download'){
-  if(p.remote){
+  if(p.remote&&!photoCards()){
    await i.deferReply(ep(''));
    await trackUnsplashPair(p);
    return i.editReply(ui('',{embeds:unsplashEmbeds(p),components:[]}));
@@ -414,6 +439,7 @@ async function buttons(i,client){
   const {mediaPath}=await import('./db.js');
   const image=p.kind==='profile'?new AttachmentBuilder((await renderCard(p)).buffer,{name:'profile-card.png'}):
    new AttachmentBuilder(mediaPath(p.avatar),{name:'pc-wallpaper.jpg'});
+  if(p.remote)await trackUnsplashPair(p);
   return i.editReply(ui('',{files:[image],components:[]}));
  }
 

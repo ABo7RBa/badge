@@ -1,9 +1,9 @@
 {
   "name": "abo-7rb-complete-five-feeds",
-  "version": "16.12.0",
+  "version": "16.13.0",
   "private": true,
   "type": "module",
-  "description": "Arabic Discord bot: Unsplash hotlinked photo pairs, Wallhaven anime/PC previews, Fanart.tv film artwork",
+  "description": "Arabic Discord bot: matching profile cards from Unsplash, Wallhaven anime/PC and Fanart.tv film artwork",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

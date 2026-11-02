@@ -22,6 +22,7 @@ import {startAutomation,importImages,post} from './src/bot.js';
 import {guild,packs,makeRoom,addPack} from './src/db.js';
 process.env.SOURCE_ONLY='false'; // The removed legacy flag must never re-enable a library.
 process.env.AUTO_FETCH='true';process.env.WALLHAVEN_ENABLED='true';
+delete process.env.PHOTO_DISPLAY; // Default publication must be a fresh source-derived composite card.
 process.env.FANART_API_KEY='test';process.env.FANART_MOVIE_IDS='tt1375666';
 const seed={kind:'profile',avatar:'avatar.png',banner:'banner.png',reviewedWithV86:true,visualHash:'a'.repeat(64),bannerVisualHash:'b'.repeat(64),avatarDHash:'abcd',bannerDHash:'1234'};
 const av=await fs.readFile('avatar.png'),bn=await fs.readFile('banner.png');
@@ -39,6 +40,11 @@ globalThis.fetch=async raw=>{
    urls:{regular:'https://images.unsplash.com/photo-'+id+'?ixid=retained'},links:{html:'https://unsplash.com/photos/'+id,download_location:'https://api.unsplash.com/photos/'+id+'/download'},
    user:{name:'Source Test',links:{html:'https://unsplash.com/@sourcetest'}}}]});
  }
+ if(u.hostname==='images.unsplash.com'){
+  assert.equal(u.searchParams.get('ixid'),'retained');
+  if(mode==='image-fail')return new Response('unavailable',{status:503});
+  return new Response(u.pathname.includes('scene001')?bn:av,{headers:{'content-type':'image/png'}});
+ }
  if(u.hostname==='webservice.fanart.tv')return Response.json({imdb_id:'tt1375666',name:'Inception',movieposter:mode==='empty'?[]:[{id:'1',url:'https://assets.fanart.tv/fanart/movies/1/poster.png'}],moviebackground:mode==='empty'?[]:[{id:'2',url:'https://assets.fanart.tv/fanart/movies/1/banner.png'}]});
  if(u.hostname==='assets.fanart.tv')return new Response(u.pathname.endsWith('poster.png')?av:bn,{headers:{'content-type':'image/png'}});
  if(u.hostname==='w.wallhaven.cc')return new Response(u.pathname.includes('a1b2c3')?av:bn,{headers:{'content-type':'image/png'}});
@@ -49,7 +55,8 @@ globalThis.fetch=async raw=>{
  }
  throw Error('Unexpected network');
 };
-for(const category of ['girls','boys','movies','anime','pc_wallpapers'])for(const outcome of ['good','fail','empty']){
+for(const category of ['girls','boys','movies','anime','pc_wallpapers'])for(const outcome of ['good','fail','empty','image-fail']){
+ if(outcome==='image-fail'&&!['girls','boys'].includes(category))continue;
  const gid=category+'-'+outcome,g=guild(gid),room=g.rooms.room=makeRoom(category);
  g.packs.push({...seed,id:'old-manual',category,bundled:false,importedAutomatically:false,photoVerified:true,categoryVerified:true,filmVerified:category==='movies',verificationSource:category==='movies'?'manual':'moderator-photo'});
  assert(g.packs.some(p=>p.id==='old-manual'),'legacy saved photo must tempt fallback');
@@ -60,6 +67,7 @@ for(const category of ['girls','boys','movies','anime','pc_wallpapers'])for(cons
  }
  phase='fresh';mode=outcome;process.env.UNSPLASH_ACCESS_KEY='fresh-'+gid;
  delete g.fetchStatus?.[category];g.fetchAt[category]=0;
+ const recordsBefore=g.packs.map(record=>record.id),usedBefore=[...room.usedIds];
  const messages=[];requests=[];const tasks=[];
  const client={user:{id:'bot'},channels:{fetch:async()=>({guildId:gid,isTextBased:()=>true,permissionsFor:()=>({has:()=>true}),send:async p=>messages.push(p)})}};
  const timers={setInterval:(callback,ms)=>{tasks.push({callback,ms});return tasks.length;},setTimeout:(callback,ms)=>{tasks.push({callback,ms});return tasks.length;},clearInterval(){},clearTimeout(){}};
@@ -69,17 +77,52 @@ for(const category of ['girls','boys','movies','anime','pc_wallpapers'])for(cons
  assert(requests.length>0,'publishing must consult the provider even when local images are available');
  if(outcome==='good'){
   assert.equal(messages.length,1,room.error);assert.equal(room.count,1);
-  if(['girls','boys'].includes(category))assert(messages[0].embeds[0].toJSON().image.url.includes('fresh'));
+  if(['girls','boys'].includes(category)){
+   assert.equal(messages[0].files.length,1);assert(messages[0].files[0].attachment.length>1000);
+   const info=await (await import('sharp')).default(messages[0].files[0].attachment).metadata();
+   assert.equal(info.format,'png');assert.equal(info.width,1080);assert.equal(info.height,700);
+   const embed=messages[0].embeds[0].toJSON();assert(embed.image.url.startsWith('attachment://'));
+   assert.equal(embed.thumbnail,undefined);assert.equal(embed.description,undefined);
+   const fetchedImages=requests.filter(u=>u.hostname==='images.unsplash.com');
+   assert.equal(fetchedImages.length,2);assert(fetchedImages.every(u=>u.pathname.includes('fresh')),'old saved source pairs cannot supply the card');
+   assert.equal(requests.filter(u=>u.hostname==='api.unsplash.com'&&u.pathname.endsWith('/download')).length,2);
+   assert.deepEqual(await fs.readdir('storage/packs/'+gid).catch(error=>{if(error.code==='ENOENT')return [];throw error;}),[]);
+  }
   if(category==='movies'){assert(requests.some(u=>u.hostname==='assets.fanart.tv'));assert.notEqual(room.lastId,'old-manual');}
   if(category==='pc_wallpapers')assert(messages[0].embeds[0].toJSON().image.url.includes('th.wallhaven.cc'));
   if(category==='anime'){assert(messages[0].files[0].attachment.length>1000);assert.equal(messages[0].embeds[0].toJSON().description,undefined);assert.equal(requests.filter(u=>u.hostname==='w.wallhaven.cc').length,2);}
- }else{assert.equal(messages.length,0,'never send local/source-library fallback on '+category+' '+outcome);assert.equal(room.count,0);assert(room.error);}
+ }else{
+  assert.equal(messages.length,0,'never send local/source-library fallback on '+category+' '+outcome);assert.equal(room.count,0);assert(room.error);
+  if(outcome==='image-fail'){
+   const failedImageURLs=requests.filter(url=>url.hostname==='images.unsplash.com').map(url=>url.toString());
+   assert(failedImageURLs.length>0,'the failure must occur while retrieving the selected source images');
+   assert.deepEqual(g.packs.map(record=>record.id),recordsBefore,'a failed fresh card must not consume source metadata; older records stay intact');
+   assert.deepEqual(room.usedIds,usedBefore);assert.equal(room.lastId,null);
+   // Recover the same CDN URLs in the same guild and catalogue. No alternate
+   // photo, new credentials, cleared history or stored-image fallback is used.
+   mode='good';requests=[];
+   const recovered=await post(client,gid,'room',{forced:true});
+   assert.equal(messages.length,1,recovered);assert.equal(room.count,1);assert.equal(room.error,null);
+   const recoveryImageURLs=requests.filter(url=>url.hostname==='images.unsplash.com').map(url=>url.toString());
+   assert.equal(recoveryImageURLs.length,2);
+   assert(failedImageURLs.every(url=>recoveryImageURLs.includes(url)),'recovery must retrieve the same selected source pair');
+   assert.equal(messages[0].files.length,1);
+   const recoveredInfo=await (await import('sharp')).default(messages[0].files[0].attachment).metadata();
+   assert.equal(recoveredInfo.format,'png');assert.equal(recoveredInfo.width,1080);assert.equal(recoveredInfo.height,700);
+   const published=g.packs.find(record=>record.id===room.lastId);
+   assert(published?.remote);assert(published.sourceIds.every(id=>id.includes('fresh')));
+   assert.deepEqual(g.packs.filter(record=>recordsBefore.includes(record.id)).map(record=>record.id),recordsBefore,'older saved records survive both failure and recovery');
+   assert.equal(g.packs.length,recordsBefore.length+1);assert.deepEqual(room.usedIds,[published.id]);
+   assert.equal(room.enabled,false,'a forced retry must not change the paused room setting');
+   assert.deepEqual(await fs.readdir('storage/packs/'+gid).catch(error=>{if(error.code==='ENOENT')return [];throw error;}),[]);
+  }
+ }
 }
 // Disabling a required source must not silently enable local publishing.
 process.env.AUTO_FETCH='false';const g=guild('disabled-source');g.rooms.room=makeRoom('girls');
 let sends=0;const client={user:{id:'bot'},channels:{fetch:async()=>({guildId:'disabled-source',isTextBased:()=>true,permissionsFor:()=>({has:()=>true}),send:async()=>sends++})}};
 await post(client,'disabled-source','room');assert.equal(sends,0);assert.match(g.rooms.room.error,/AUTO_FETCH/);
-console.log('PASS: all five default automatic source-only routes ignore bundled, manual and stored source images, and never fall back on API failure/empty/disabled sources');
+console.log('PASS: fresh Unsplash cards, same-pair CDN recovery and all five default automatic source-only routes ignore bundled, manual and stored source images, and never fall back on API failure/empty/disabled sources');
 `});
  assert(result.includes('PASS:'));process.stdout.write(result);
 }finally{await fs.rm(temp,{recursive:true,force:true});}

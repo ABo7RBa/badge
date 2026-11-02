@@ -1,4 +1,4 @@
-# V16.12 image sources
+# V16.13 image sources
 
 | Category | Provider | Integration |
 | --- | --- | --- |
@@ -14,7 +14,9 @@ License: https://unsplash.com/license
 Fanart.tv: https://fanart.tv/api-docs/ — https://fanart.tv/get-an-api-key/
 Wallhaven: https://wallhaven.cc/help/api
 
-Unsplash uses returned images.unsplash.com URLs directly and retains query parameters such as ixid. It does not download, transform, cache or rehost Unsplash image bytes. Photographer/photo metadata and attribution links are retained. The requested image-only presentation hides attribution by default; SHOW_IMAGE_CREDITS=true displays photographer and Unsplash links with utm_source=abo7rb&utm_medium=referral. The Unsplash API guidelines require displayed attribution, which the image-only presentation does not fulfill. Chosen assets are tracked through their validated API download_location before publishing or opening download actions. Merely searching/prefetching/previewing candidates does not register downloads.
+The default PHOTO_DISPLAY=card renders Unsplash boys/girls with the same composite profile-card template as anime. Validated API image URLs are requested exactly, including ixid, without an API Authorization header and without redirects. Images are bounded to8MiB per response and40million decoded pixels, composited in memory, and uploaded to Discord as onePNG. Original image bytes are never written into a local library. Saved Unsplash records remain URL/source metadata.
+
+PHOTO_DISPLAY=source retains original hotlinked banner/thumbnail presentation and does not download or rehost Unsplash images. Unsplash API requirements include hotlinking and displayed photographer/Unsplash attribution; the requested composite-card mode does not fulfill hotlinking. Use PHOTO_DISPLAY=source and SHOW_IMAGE_CREDITS=true to retain both requirements. Photographer/source metadata and attribution URLs remain available in either mode. Selected publication/download actions are tracked with the validated API download_location; searches and previews do not register tracking requests.
 
 Search metadata is cached for one hour. A conservative shared45actual APIrequests/hour/key guard counts searches and tracking and observes provider rate-limit responses. Keys are not stored in cache JSON or exposed in errors. Boys style is selected through source descriptions/tags, monochrome search filters and average-color metadata, not local pixel processing or an AI pose classifier.
 
@@ -31,3 +33,5 @@ Fanart V16.12: api_key query authentication supplements the api-key header for i
 Movie searches scan up to10catalogue records and24image downloads per attempt, with3concurrent image downloads and bounded artwork windows. Later catalogue records and artwork remain reachable through rotating search progress. Unsuitable results and an incomplete search are distinguished. Avatar minimum320matches local normalization. These are local mocked-service regressions, not live service validation.
 
 Visual duplicate checks against published records run during Fanart pair selection, allowing alternative artwork with different content to be tried when the service assigns new IDs to duplicate images. Artwork grid progress also keeps a successful tile reachable while its pair is pending online revalidation.
+
+V16.13 card delivery: AttachFiles is checked before fetching a pair. Rendering completes before usage tracking, and room binding/revision is checked after each asynchronous stage. Failed/cancelled new photo-card publications and failed previews roll back only their new unposted metadata so the source pair can be retried online. Earlier records and published duplicate history remain intact. Per-category locks serialize rendering/publication against new imports; no failed card silently falls back to stored pictures or source-view embeds.

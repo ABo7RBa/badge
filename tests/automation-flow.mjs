@@ -55,7 +55,11 @@ globalThis.fetch=async(raw,opts)=>{
    links:{html:'https://unsplash.com/photos/'+id,download_location:'https://api.unsplash.com/photos/'+id+'/download?ixid=original-'+id},
    urls:{regular:'https://images.unsplash.com/photo-'+id+'?ixid=original-'+id+'&w=1080'}}]});
  }
- if(u.hostname==='images.unsplash.com')throw Error('Unsplash image download/rehosting is forbidden in this path');
+ if(u.hostname==='images.unsplash.com'){
+  assert.equal(opts.headers.Authorization,undefined);assert.equal(opts.redirect,'error');assert(u.searchParams.get('ixid'));
+  const kind=u.pathname.endsWith('av')?'avatar':'banner',match=u.pathname.match(/([0-9]{3})(?:av|bn)$/);
+  return new Response(fixtures[kind+'-'+Number(match[1])],{headers:{'content-type':'image/png'}});
+ }
  if(u.hostname==='webservice.fanart.tv')return Response.json({imdb_id:'tt1375666',name:'Inception',
   movieposter:[{id:'51',url:'https://assets.fanart.tv/fanart/movies/27205/poster.png'}],
   moviebackground:[{id:'52',url:'https://assets.fanart.tv/fanart/movies/27205/background.png'}]});
@@ -90,10 +94,10 @@ function addRoom(gid,category,{enabled=true,future=false,fail=false,sendGate=nul
   send:async payload=>{
    attempts.set(cid,(attempts.get(cid)||0)+1);
    if(['girls','boys'].includes(category)){
-    const embed=payload.embeds[0].toJSON();
-    for(const image of [embed.image.url,embed.thumbnail.url]){
-     const photoId=new URL(image).pathname.slice('/photo-'.length);
-     assert(apiCalls.some(url=>url.hostname==='api.unsplash.com'&&url.pathname==='/photos/'+photoId+'/download'),'selected photo tracked before send');
+    const record=g.packs.find(p=>p.id===g.fetchStatus[category].recordId);
+    for(const download of record.downloadLocations){
+     const endpoint=new URL(download);
+     assert(apiCalls.some(url=>url.hostname==='api.unsplash.com'&&url.pathname===endpoint.pathname),'selected photo tracked before send');
     }
    }
    if(fail)throw Error('test send denied');
@@ -126,10 +130,11 @@ for(const [category,item] of Object.entries(active)){
   assert(sent[0].payload.files[0].attachment.length>1000);assert.equal(embed.description,undefined);
   assert.equal(item.g.fetchStatus[category].state,'success');
  }else{
-  assert(!sent[0].payload.files,'Unsplash pairs must remain hotlinked');
-  assert(embed.image.url.startsWith('https://images.unsplash.com/photo-'));
-  assert(embed.thumbnail.url.startsWith('https://images.unsplash.com/photo-'));
-  assert(embed.image.url.includes('ixid=original-'));assert.equal(embed.description,undefined);assert.equal(embed.title,undefined);
+  assert.equal(sent[0].payload.files.length,1,'Unsplash pairs use the same full card as anime');
+  const info=await (await import('sharp')).default(sent[0].payload.files[0].attachment).metadata();
+  assert.equal(info.format,'png');assert.equal(info.width,1080);assert.equal(info.height,700);
+  assert(embed.image.url.startsWith('attachment://'));assert.equal(embed.thumbnail,undefined);
+  assert.equal(embed.description,undefined);assert.equal(embed.title,undefined);
   assert.equal(item.g.packs[0].credits.avatar.name,'Automation Test Artist');
   assert.equal(item.g.fetchStatus[category].state,'success');
  }
@@ -137,7 +142,7 @@ for(const [category,item] of Object.entries(active)){
 assert.equal(messages.some(x=>x.cid===paused.cid||x.cid===future.cid),false);
 assert(apiCalls.some(x=>x.hostname==='api.unsplash.com'&&x.pathname==='/search/photos'));
 assert.equal(apiCalls.filter(x=>x.hostname==='api.unsplash.com'&&x.pathname.endsWith('/download')).length,4,'only selected girls/boys photos are tracked');
-assert.equal(apiCalls.some(x=>x.hostname==='images.unsplash.com'),false,'hotlinked images must not be downloaded by the bot');
+assert.equal(apiCalls.filter(x=>x.hostname==='images.unsplash.com').length,4,'selected card images are downloaded only for their renders');
 assert(apiCalls.some(x=>x.hostname==='webservice.fanart.tv'));
 assert(apiCalls.some(x=>x.hostname==='wallhaven.cc'));
 const deliveredAtFirstTick=messages.length,callsAtFirstTick=apiCalls.length;
@@ -169,7 +174,7 @@ const failed=addRoom('send-failure','boys',{fail:true});generation=2;
 await tick();
 assert.equal(messages.some(x=>x.cid===failed.cid),false);assert.equal(failed.room.count,0);
 assert.equal(failed.room.usedIds.length,0);assert.match(failed.room.error,/test send denied/);
-assert.equal(failed.g.packs.length,1,'the valid imported pack remains available to retry');failed.room.enabled=false;
+assert.equal(failed.g.packs.length,0,'failed sends roll back the new remote record so its images remain eligible to retry');failed.room.enabled=false;
 
 // Permission failures are diagnosed before any provider/download work is done.
 const forbidden=addRoom('permission-failure','boys',{permissions:false});const beforePermissions=apiCalls.length;

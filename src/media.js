@@ -3,10 +3,12 @@ import path from 'node:path';
 import sharp from 'sharp';
 import {ROOT,mediaPath,sha,kindFor} from './db.js';
 import {validatePair,visualSignature,orientedDimensions} from './quality-gate.js';
+import {isUnsplashRecord} from './unsplash-record.js';
 
 const safeSVG=x=>String(x||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const svg=s=>Buffer.from(s,'utf8');
 const MB=8*1024*1024;
+const SAFE_IMAGE={limitInputPixels:40_000_000,animated:false};
 export async function readLimited(url){
  const u=new URL(url);if(u.protocol!=='https:')throw Error('HTTPS مطلوب');
  const resp=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(20000),headers:{'User-Agent':'ABO7RB/16.0 (Discord image bot)'}});
@@ -48,14 +50,24 @@ export async function visualHash(image){
 /** Only the banner stored in the same approved pair is shown/downloaded. */
 export async function effectiveBannerPath(p){return mediaPath(p.banner);}
 export async function renderCard(p,options={}) {
- const avatarFile=mediaPath(p.avatar),bannerFile=options.bannerFile ? mediaPath(options.bannerFile) : await effectiveBannerPath(p);
- if(p.kind==='wallpaper')return {buffer:await fs.readFile(avatarFile),filename:'wallpaper.jpg'};
+ let avatarInput,bannerInput;
+ if(p.remote){
+  // Validate the saved pair before requesting either URL. Remote bytes stay in
+  // memory for this render; no photo library, CDN auth header or URL rewrite.
+  if(!isUnsplashRecord(p))throw Error('بيانات صور Unsplash غير صالحة');
+  try{[avatarInput,bannerInput]=await Promise.all([readLimited(p.avatarURL),readLimited(p.bannerURL)]);}
+  catch{throw Error('تعذر تنزيل صور Unsplash لتجهيز البطاقة؛ حاول لاحقًا');}
+ }else{
+  avatarInput=mediaPath(p.avatar);
+  bannerInput=options.bannerFile?mediaPath(options.bannerFile):await effectiveBannerPath(p);
+ }
+ if(p.kind==='wallpaper')return {buffer:await fs.readFile(avatarInput),filename:'wallpaper.jpg'};
  const W=1080,H=700;
  // Unlike older versions, show an actual independent scene at the top.
- const banner=await sharp(bannerFile).rotate().resize(1036,402,{fit:'cover',position:'centre'}).png().toBuffer();
+ const banner=await sharp(bannerInput,SAFE_IMAGE).rotate().resize(1036,402,{fit:'cover',position:'centre'}).png().toBuffer();
  const banMask=svg(`<svg width="1036" height="402" xmlns="http://www.w3.org/2000/svg"><rect width="1036" height="402" rx="29" fill="#fff"/></svg>`);
  const roundedBanner=await sharp(banner).composite([{input:banMask,blend:'dest-in'}]).png().toBuffer();
- const avatar=await sharp(avatarFile).rotate().resize(298,298,{fit:'cover',position:'attention'}).png().toBuffer();
+ const avatar=await sharp(avatarInput,SAFE_IMAGE).rotate().resize(298,298,{fit:'cover',position:'attention'}).png().toBuffer();
  const avMask=svg(`<svg width="298" height="298" xmlns="http://www.w3.org/2000/svg"><circle cx="149" cy="149" r="139" fill="white"/></svg>`);
  const circ=await sharp(avatar).composite([{input:avMask,blend:'dest-in'}]).png().toBuffer();
  const frame=svg(`<svg width="1080" height="700" xmlns="http://www.w3.org/2000/svg">

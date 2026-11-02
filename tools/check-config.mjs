@@ -15,6 +15,7 @@ for(const name of ['DISCORD_TOKEN','UNSPLASH_ACCESS_KEY','FANART_API_KEY']){
 for(const name of ['AUTO_FETCH','WALLHAVEN_ENABLED','SHOW_IMAGE_CREDITS']){
  const value=process.env[name];check(name,value===undefined||['true','false'].includes(value),'استخدم true أو false');
 }
+check('PHOTO_DISPLAY',process.env.PHOTO_DISPLAY===undefined||['card','source'].includes(process.env.PHOTO_DISPLAY),'card لبطاقة موحدة أو source لروابط Unsplash الأصلية');
 check('GUILD_ID',!process.env.GUILD_ID?.trim()||/^\d{17,22}$/.test(process.env.GUILD_ID.trim()),'اختياري؛ معرف رقمي للسيرفر');
 const movies=process.env.FANART_MOVIE_IDS;
 if(movies)check('FANART_MOVIE_IDS',movies.split(',').every(id=>/^tt\d{7,10}$/.test(id.trim())),'معرفات IMDb مفصولة بفواصل');

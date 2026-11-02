@@ -72,6 +72,12 @@ const remote={id:'remote-boy',remote:true,kind:'profile',category:'boys',provide
  sourceUrl:'https://unsplash.com/photos/remote01',sourceBannerUrl:'https://unsplash.com/photos/remote02',
  downloadLocations:['https://api.unsplash.com/photos/remote01/download','https://api.unsplash.com/photos/remote02/download'],
  credits:{avatar:{name:'Portrait Artist',url:'https://unsplash.com/@portrait'},banner:{name:'Scene Artist',url:'https://unsplash.com/@scene'}}};
+process.env.PHOTO_DISPLAY='source';
+const av=await fs.readFile('avatar.png'),bn=await fs.readFile('banner.png');
+globalThis.fetch=async raw=>{
+ const u=new URL(raw);assert.equal(u.hostname,'images.unsplash.com');
+ return new Response(u.pathname.endsWith('bn')||u.pathname.endsWith('02')?bn:av,{headers:{'content-type':'image/png'}});
+};
 addPack('interactions',remote);
 const navigation=interaction('select',{customId:'sas:category:preview:0',values:['boys']});
 await handleInteraction(navigation,bot);
@@ -89,9 +95,11 @@ assert.equal(navigation.state.attachments.length,1);assert(navigation.files[0].d
 navigation.customId='sas:menu';navigation.values=['rooms'];await handleInteraction(navigation,bot);
 assert.deepEqual(navigation.state.embeds,[]);assert.deepEqual(navigation.state.attachments,[],'text navigation clears image attachments');
 const local=packs('interactions','anime')[0];
+process.env.PHOTO_DISPLAY='card';
 const slashPreview=interaction('command',{commandName:'معاينة',state:{embeds:[{description:'stale'}],attachments:[]},
  options:{getChannel:()=>null,getString:name=>name==='category'?'boys':null}});
-await handleInteraction(slashPreview,bot);assert.equal(slashPreview.state.embeds.length,1);assert.deepEqual(slashPreview.state.attachments,[]);
+await handleInteraction(slashPreview,bot);assert.deepEqual(slashPreview.state.embeds,[]);assert.equal(slashPreview.state.attachments.length,1);
+assert.equal(slashPreview.state.content,'');assert.equal(slashPreview.files[0].data.length>1000,true);
 
 // A download must show exactly one full card, not a three-image Discord gallery.
 const download=interaction('button',{customId:'sas:download:'+local.id,memberPermissions:new PermissionsBitField()});
@@ -103,20 +111,28 @@ assert.equal(download.state.content,'');assert.deepEqual(download.state.embeds,[
 const cardInfo=await (await import('sharp')).default(download.files[0].data).metadata();
 assert.equal(cardInfo.format,'png');assert.equal(cardInfo.width,1080);assert.equal(cardInfo.height,700);
 assert(download.files.every(file=>file.data.length>1000));
-// Unsplash downloads remain source-hosted images, without captions or link text.
+// Unsplash downloads now return exactly one composite card, just like anime.
 process.env.UNSPLASH_ACCESS_KEY='test-download-key';let tracks=0;
 globalThis.fetch=async raw=>{
- const u=new URL(raw);assert.equal(u.hostname,'api.unsplash.com');assert(u.pathname.endsWith('/download'));tracks++;
+ const u=new URL(raw);
+ if(u.hostname==='images.unsplash.com')return new Response(u.pathname.endsWith('02')?bn:av,{headers:{'content-type':'image/png'}});
+ assert.equal(u.hostname,'api.unsplash.com');assert(u.pathname.endsWith('/download'));tracks++;
  return Response.json({url:'https://images.unsplash.com/photo-original'});
 };
 const remoteDownload=interaction('button',{customId:'sas:download:'+remote.id});
 await handleInteraction(remoteDownload,bot);
 assert.equal(tracks,2);assert.equal(remoteDownload.events[0],'deferReply');
-assert.equal(remoteDownload.state.content,'');assert.equal(remoteDownload.state.embeds.length,1);
-assert.equal(remoteDownload.state.embeds[0].image.url,remote.bannerURL);
-assert.equal(remoteDownload.state.embeds[0].thumbnail.url,remote.avatarURL);
-assert.equal(remoteDownload.state.embeds[0].description,undefined);assert.equal(remoteDownload.state.embeds[0].title,undefined);
-assert.deepEqual(remoteDownload.state.components,[]);assert.equal(remoteDownload.files.length,0);
+assert.equal(remoteDownload.state.content,'');assert.deepEqual(remoteDownload.state.embeds,[]);
+assert.deepEqual(remoteDownload.state.components,[]);assert.equal(remoteDownload.files.length,1);
+const remoteInfo=await (await import('sharp')).default(remoteDownload.files[0].data).metadata();
+assert.equal(remoteInfo.format,'png');assert.equal(remoteInfo.width,1080);assert.equal(remoteInfo.height,700);
+assert.equal(remoteDownload.files[0].name,'profile-card.png');
+process.env.PHOTO_DISPLAY='source';
+const sourceDownload=interaction('button',{customId:'sas:download:'+remote.id});
+await handleInteraction(sourceDownload,bot);assert.equal(tracks,4);
+assert.equal(sourceDownload.files.length,0);assert.equal(sourceDownload.state.embeds[0].image.url,remote.bannerURL);
+assert.equal(sourceDownload.state.embeds[0].thumbnail.url,remote.avatarURL);
+process.env.PHOTO_DISPLAY='card';
 // Confirm deletion is acknowledged before any potentially slow REST request.
 const deletion=interaction('button',{customId:'sas:confirm:original-message'});
 const deletionClient={user:{id:'test-bot'},channels:{fetch:async()=>{
