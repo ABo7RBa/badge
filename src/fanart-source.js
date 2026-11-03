@@ -29,7 +29,11 @@ function artworkUrl(value){
     // Upgrade only this exact known host and continue to verify TLS normally.
     if(!['http:','https:'].includes(url.protocol)||url.hostname!=='assets.fanart.tv'||url.username||url.password||url.port)return null;
     url.protocol='https:';
-    return safeSourceUrl(url.toString(),['assets.fanart.tv'],/^\/fanart\/movies\//)?url.toString():null;
+    // Current API responses use flat /fanart/<slug>.<image> paths, while older
+    // records retain /fanart/movies/... . Both remain on the exact known CDN.
+    const allowedPath=/^\/fanart\/movies\//.test(url.pathname)||
+      /^\/fanart\/[a-z0-9][a-z0-9_-]{0,199}\.(?:jpg|jpeg|png|webp)$/i.test(url.pathname);
+    return allowedPath&&safeSourceUrl(url.toString(),['assets.fanart.tv'])?url.toString():null;
   }catch{return null;}
 }
 function imageNetworkError() {

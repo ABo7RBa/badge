@@ -25,17 +25,23 @@ import fs from 'node:fs/promises';
 import {importImages,post,handleInteraction} from './src/bot.js';
 import {MessageFlags} from 'discord.js';
 import {guild,makeRoom,store,save,loadStore,migrateLegacySettings} from './src/db.js';
+import {visualHash} from './src/media.js';
 process.env.FANART_API_KEY='movie-delivery-test-key';
 process.env.FANART_MOVIE_IDS='tt1375666';process.env.AUTO_FETCH='true';
 process.env.SHOW_IMAGE_CREDITS='false';
 const poster=await fs.readFile('poster.png'),background=await fs.readFile('background.png');
 const alternativePoster=await fs.readFile('alternative-poster.png'),alternativeBackground=await fs.readFile('alternative-background.png');
-let mode='ok',apiCalls=0,imageCalls=0;
+const flatPoster='/fanart/inception-52df821bd2a9f.jpg',flatBackground='/fanart/inception-4fdb7d192f166.jpg';
+const downloadedPaths=[];
+let mode='flat-artwork',apiCalls=0,imageCalls=0;
 globalThis.fetch=async raw=>{
  const url=new URL(raw);
  if(url.hostname==='webservice.fanart.tv'){
   apiCalls++;
   if(mode==='api-error')return Response.json({}, {status:503});
+  if(mode==='flat-artwork')return Response.json({imdb_id:'tt1375666',name:'Example Movie',
+   movieposter:[{id:'111',url:'https://assets.fanart.tv'+flatPoster}],
+   moviebackground:[{id:'222',url:'https://assets.fanart.tv'+flatBackground}]});
   if(mode==='duplicate-artwork')return Response.json({imdb_id:'tt1375666',name:'Example Movie',
    movieposter:[{id:'333',url:'https://assets.fanart.tv/fanart/movies/27205/duplicate-poster.png'},{id:'444',url:'https://assets.fanart.tv/fanart/movies/27205/alternative-poster.png'}],
    moviebackground:[{id:'555',url:'https://assets.fanart.tv/fanart/movies/27205/duplicate-background.png'},{id:'666',url:'https://assets.fanart.tv/fanart/movies/27205/alternative-background.png'}]});
@@ -44,8 +50,8 @@ globalThis.fetch=async raw=>{
    moviebackground:[{id:'222',url:'https://assets.fanart.tv/fanart/movies/27205/background.png'}]});
  }
  if(url.hostname==='assets.fanart.tv'){
-  imageCalls++;
-  const bytes=url.pathname.endsWith('alternative-poster.png')?alternativePoster:url.pathname.endsWith('alternative-background.png')?alternativeBackground:url.pathname.endsWith('poster.png')?poster:background;
+  imageCalls++;downloadedPaths.push(url.pathname);
+  const bytes=url.pathname===flatPoster?poster:url.pathname===flatBackground?background:url.pathname.endsWith('alternative-poster.png')?alternativePoster:url.pathname.endsWith('alternative-background.png')?alternativeBackground:url.pathname.endsWith('poster.png')?poster:background;
   return new Response(bytes,{headers:{'content-type':'image/png'}});
  }
  throw Error('Unexpected live network destination');
@@ -62,7 +68,8 @@ function destination(gid,{fail=false}={}){
 }
 
 // The documented manual fetch -> publish sequence must send the freshly fetched
-// movie even when this film has just one usable poster/background pair.
+// movie even when this film has just one usable poster/background pair. Current
+// Fanart CDN URLs are flat /fanart/<name>-<hash>.jpg paths, not /fanart/movies/.
 const manual=destination('manual-then-post');
 assert.match(await importImages(manual.gid,'movies',true),/^✅/);
 assert.equal(manual.g.packs.length,1);
@@ -79,6 +86,24 @@ assert.deepEqual(manual.room.usedIds,[prepared.id]);
 assert.equal(manual.messages[0].files.length,1);
 assert(manual.messages[0].files[0].attachment.length>1000);
 assert.equal(manual.messages[0].embeds[0].toJSON().description,undefined);
+assert.deepEqual(manual.g.packs[0].sourceIds,['fanart:art:111','fanart:art:222']);
+assert.equal(manual.g.packs[0].sourceUrl,'https://www.imdb.com/title/tt1375666/','the pair must remain tied to one API-verified movie');
+assert.equal(manual.g.packs[0].visualHash,await visualHash(poster));
+assert.equal(manual.g.packs[0].bannerVisualHash,await visualHash(background));
+assert(downloadedPaths.filter(path=>path===flatPoster).length>=2);
+assert(downloadedPaths.filter(path=>path===flatBackground).length>=2);
+// The flat-CDN fixture must also produce the same complete downloadable card.
+let downloadPayload;
+const download={guildId:manual.gid,customId:'sas:download:'+prepared.id,deferred:false,
+ isAutocomplete:()=>false,isChatInputCommand:()=>false,isStringSelectMenu:()=>false,isChannelSelectMenu:()=>false,isButton:()=>true,isModalSubmit:()=>false,
+ async deferReply(payload){assert.equal(payload.flags,MessageFlags.Ephemeral);this.deferred=true;},
+ async editReply(payload){downloadPayload=payload;},async reply(payload){downloadPayload=payload;}};
+await handleInteraction(download,manual.client);
+assert(download.deferred);assert.equal(downloadPayload.content,'');assert.equal(downloadPayload.files.length,1);
+assert.equal(downloadPayload.files[0].name,'profile-card.png');
+assert.deepEqual(downloadPayload.files[0].attachment,manual.messages[0].files[0].attachment,'download returns the complete posted profile card');
+const cardInfo=await (await import('sharp')).default(downloadPayload.files[0].attachment).metadata();
+assert.equal(cardInfo.format,'png');assert.equal(cardInfo.width,1080);assert.equal(cardInfo.height,700);
 const noRepeat=await post(manual.client,manual.gid,'room',{forced:true});
 assert.equal(manual.messages.length,1,'published movie images must never be recycled');
 assert(!noRepeat.includes('تم النشر'));

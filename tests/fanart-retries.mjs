@@ -255,3 +255,48 @@ console.log('PASS: published-image duplicate guards are classified by Arabic rea
 let httpReport;
 await fetchFanartMovie(new Set(),{...base,apiKey:'http-shape-fixture',apiFetch:async()=>Response.json(film()),imageFetch:async url=>Buffer.from(url),onReport:report=>{httpReport=report;}});
 assert.equal(httpReport.apiStatus,200);assert.equal(httpReport.apiContentType,'json');
+
+
+// Current Fanart success bodies use flat CDN paths rather than the legacy
+// /fanart/movies/... hierarchy. Exercise those actual-shaped URLs with real
+// JPEG decoding/QA, not a validator stub, so valid artwork cannot silently vanish.
+const currentPosterURL='https://assets.fanart.tv/fanart/inception-52df821bd2a9f.jpg';
+const currentBackgroundURL='https://assets.fanart.tv/fanart/inception-4fdb7d192f166.jpg';
+const currentPoster=await sharp(generated.avatar).jpeg().toBuffer();
+const currentBackground=await sharp(generated.banner).jpeg().toBuffer();
+const currentSchema={name:'Inception',tmdb_id:'27205',imdb_id:'tt1375666',
+ movieposter:[{id:'812345',url:currentPosterURL.replace('https:','http:'),lang:'en',likes:'12'}],
+ moviebackground:[{id:'812346',url:currentBackgroundURL,lang:'',likes:'9'}]};
+assert(validArtwork(currentSchema.movieposter[0]));assert(validArtwork(currentSchema.moviebackground[0]));
+assert(validArtwork(art(1,'poster')),'legacy nested movie artwork remains supported');
+for(const url of [
+ 'https://assets.fanart.tv.evil.test/fanart/inception-52df821bd2a9f.jpg',
+ 'https://user:pass@assets.fanart.tv/fanart/inception-52df821bd2a9f.jpg',
+ 'https://assets.fanart.tv:8443/fanart/inception-52df821bd2a9f.jpg',
+ 'https://assets.fanart.tv/fanart/artists/inception-52df821bd2a9f.jpg',
+ 'https://assets.fanart.tv/fanart/inception-52df821bd2a9f.svg',
+ 'https://assets.fanart.tv/fanart/inception-52df821bd2a9f.php',
+ 'https://assets.fanart.tv/fanart/.hidden.jpg',
+ 'https://assets.fanart.tv/fanart/inception%2Fother.jpg',
+ 'https://assets.fanart.tv/fanart/inception-without-extension',
+ 'https://assets.fanart.tv/fanart/../inception-52df821bd2a9f.jpg'
+])assert(!validArtwork({id:'812345',url}),url);
+const currentDownloads=[];let currentReport;
+const currentPair=await fetchFanartMovie(new Set(),{
+ apiKey:'current-flat-path-fixture',ids:['tt1375666'],
+ apiFetch:async()=>Response.json(currentSchema),
+ imageFetch:async url=>{
+  currentDownloads.push(url);assert.equal(new URL(url).protocol,'https:');assert.equal(new URL(url).hostname,'assets.fanart.tv');
+  if(url===currentPosterURL)return currentPoster;
+  if(url===currentBackgroundURL)return currentBackground;
+  assert.fail('unexpected flat-path download');
+ },validate:validatePair,onReport:report=>{currentReport=report;}
+});
+assert(currentPair,'current flat-path artwork must produce a usable film pair');
+assert.equal(currentPair.avatar,currentPoster);assert.equal(currentPair.banner,currentBackground);
+assert.deepEqual(currentPair.sourceIds,['fanart:art:812345','fanart:art:812346']);
+assert.equal(currentPair.provider,'Fanart.tv');assert.equal(currentPair.filmVerified,true);
+assert.deepEqual(new Set(currentDownloads),new Set([currentPosterURL,currentBackgroundURL]));
+assert.equal(currentReport.validPosters,1);assert.equal(currentReport.validBackgrounds,1);
+assert.equal(currentReport.imagesAttempted,2);assert.equal(currentReport.imagesFailed,0);assert.equal(currentReport.pairsChecked,1);
+console.log('PASS: current flat Fanart CDN paths retrieve and validate real movie JPEGs while legacy and URL protections remain intact');
