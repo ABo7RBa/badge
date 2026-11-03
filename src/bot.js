@@ -13,6 +13,8 @@ import {randomUUID} from 'node:crypto';
 import {validatePair} from './quality-gate.js';
 import {APP_VERSION,sanitizeMovieReport,formatMovieReport,explainMovieReport,sanitizeMovieError} from './movie-diagnostics.js';
 import {imageActionButton,setupImageButtonEmojis} from './button-icons.js';
+import {sendPostSeparator} from './post-separator.js';
+import {saveGuildSeparator} from './separator-upload.js';
 // Optional attribution display; image-only messages are the requested default.
 const showImageCredits=()=>process.env.SHOW_IMAGE_CREDITS==='true';
 const photoCards=()=>process.env.PHOTO_DISPLAY!=='source';
@@ -156,6 +158,7 @@ export async function post(client,gid,cid,{forced=false}={}){
      r.wallhavenUsedIds??=[];r.wallhavenUsedIds.push(chosen.id);
      r.count=(r.count||0)+1;r.lastPostAt=Date.now();r.lastId=chosen.id;
      r.nextAt=Date.now()+(r.minutes||40)*EVERY;r.error=null;save();
+     await sendPostSeparator(channel,{guildId:gid,shouldContinue:stillCurrent});
      return `✅ نشرت خلفية جديدة للألعاب أو الأنمي في <#${cid}>`;
     }
     r.error='لا توجد خلفية ألعاب أو أنمي جديدة مناسبة من الموقع';
@@ -191,7 +194,7 @@ export async function post(client,gid,cid,{forced=false}={}){
    await trackUnsplashPair(picked);
    if(!stillCurrent())return cancelled;
    await channel.send({embeds:unsplashEmbeds(picked),components:[rowFor(picked.id)],allowedMentions:{parse:[]}});
-   sent(r,picked.id);save();return `تم النشر في <#${cid}>`;
+   sent(r,picked.id);save();await sendPostSeparator(channel,{guildId:gid,shouldContinue:stillCurrent});return `تم النشر في <#${cid}>`;
   }
   if(!channel.permissionsFor(client.user)?.has(PermissionFlagsBits.AttachFiles))throw Error('صلاحية Attach Files مطلوبة لنشر الأطقم');
   // Render only the two images returned together by the website adapter.
@@ -212,7 +215,7 @@ export async function post(client,gid,cid,{forced=false}={}){
    const original=guild(gid).packs.find(p=>p.id===picked.id);
    if(original){original.deliveryState='published';original.publishedAt=Date.now();}
   }
-  sent(r,picked.id);save();return `تم النشر في <#${cid}>`;
+  sent(r,picked.id);save();await sendPostSeparator(channel,{guildId:gid,shouldContinue:stillCurrent});return `تم النشر في <#${cid}>`;
   }finally{if(newPhoto&&!delivered)discardUnsentPhoto(gid,newPhoto);}
   };
   return await (lockedCategory(category)?withSourceLock(sourceLockKey(gid,category),publish):publish());
@@ -371,13 +374,20 @@ async function checkMovies(i,client){
 }
 async function commands(i,client){
  const name=i.commandName,gid=i.guildId,channel=i.options.getChannel('channel');
- const adminNames=new Set(['تجهيز-الرومات','ربط-روم','فصل-روم','تشغيل-روم','إيقاف-روم','مدة-النشر','نشر-الآن','جلب-صور','مجموعات-4k','معاينة','فحص-الأفلام']);
+ const adminNames=new Set(['تجهيز-الرومات','ربط-روم','فصل-روم','تشغيل-روم','إيقاف-روم','مدة-النشر','نشر-الآن','جلب-صور','مجموعات-4k','معاينة','فحص-الأفلام','تعيين-الفاصل']);
  if(adminNames.has(name)&&!admin(i))return i.reply(ep('⛔ هذا الأمر يحتاج صلاحية إدارة السيرفر.'));
  if(name==='تجهيز-الرومات'){await i.deferReply(ep(''));return i.editReply(await setupFiveRooms(i));}
  if(name==='لوحة-التحكم'||name==='مساعدة')return i.reply(HOME());
  if(name==='التصنيفات')return i.reply(ep(categoryText(gid)));
  if(name==='الرومات')return i.reply(ep(roomText(gid)));
  if(name==='حالة')return i.reply(ep(stateText(gid)));
+ if(name==='تعيين-الفاصل'){
+  await i.deferReply(ep(''));
+  await saveGuildSeparator(gid,i.options.getAttachment('image',true));
+  return i.editReply(process.env.POST_SEPARATOR_ENABLED==='false'?
+   '✅ حُفظت صورة الفاصل. الإرسال معطّل حاليًا؛ فعّل POST_SEPARATOR_ENABLED=true ثم أعد التشغيل.':
+   '✅ حُفظت صورة الفاصل. ستُرسل بعد منشورات الصور الجديدة في رومات هذا السيرفر.');
+ }
  if(name==='فحص-الأفلام'){await i.deferReply(ep(''));return i.editReply(await checkMovies(i,client));}
  if(name==='معاينة'){await i.deferReply(ep(''));return i.editReply(await previewFromWebsite(gid,i.options.getString('category',true)));}
  if(name==='ربط-روم'){

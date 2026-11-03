@@ -12,7 +12,7 @@ for(const name of ['DISCORD_TOKEN','UNSPLASH_ACCESS_KEY','FANART_API_KEY']){
  const valid=Boolean(value&&!/^(?:YOUR_|PUT_|PASTE_)/i.test(value));
  check(name,valid,valid?'موجود دون عرض قيمته':'أضف القيمة في .env أو إعدادات الاستضافة');
 }
-for(const name of ['AUTO_FETCH','WALLHAVEN_ENABLED','SHOW_IMAGE_CREDITS']){
+for(const name of ['AUTO_FETCH','WALLHAVEN_ENABLED','SHOW_IMAGE_CREDITS','POST_SEPARATOR_ENABLED']){
  const value=process.env[name];check(name,value===undefined||['true','false'].includes(value),'استخدم true أو false');
 }
 check('PHOTO_DISPLAY',process.env.PHOTO_DISPLAY===undefined||['card','source'].includes(process.env.PHOTO_DISPLAY),'card لبطاقة موحدة أو source لروابط Unsplash الأصلية');

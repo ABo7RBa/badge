@@ -11,6 +11,8 @@ export const cmds=[
  ch(command('إيقاف-روم','إيقاف النشر',true)),
  ch(command('مدة-النشر','تغيير الفاصل الزمني',true)).addIntegerOption(o=>o.setName('minutes').setDescription('المدة الجديدة').setRequired(true).setMinValue(5).setMaxValue(1440)),
  ch(command('نشر-الآن','إرسال صورة جديدة فورًا',true)),
+ command('تعيين-الفاصل','تعيين صورة تفصل بين منشورات الصور في هذا السيرفر',true)
+  .addAttachmentOption(o=>o.setName('image').setDescription('أرفق صورة الفاصل PNG أو JPG أو WebP').setRequired(true)),
  ch(command('مجموعات-4k','إرسال خلفية ألعاب أو أنمي أصلية في روم PC',true)),
  ch(command('فحص-الأفلام','تقرير خاص يحدد سبب توقف movies دون نشر صور في الروم',true)),
  cat(command('جلب-صور','جلب صور جديدة من المواقع للأقسام الخمسة',true)),
