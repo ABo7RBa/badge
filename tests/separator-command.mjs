@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import {fileURLToPath} from 'node:url';
-import {execFileSync} from 'node:child_process';
+import {spawnSync} from 'node:child_process';
 import sharp from 'sharp';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const temp=await fs.mkdtemp(path.join(os.tmpdir(),'abo-separator-command-'));
@@ -17,7 +17,7 @@ try{
   await sharp({create:{width:640,height:36,channels:4,background:color}}).png().toFile(path.join(temp,name+'.png'));
  }
  await sharp({create:{width:1920,height:1080,channels:3,background:'#2a324a'}}).jpeg().toFile(path.join(temp,'pc.jpg'));
- const output=execFileSync(process.execPath,['--input-type=module','-'],{cwd:temp,encoding:'utf8',input:`
+ const result=spawnSync(process.execPath,['--input-type=module','-'],{cwd:temp,encoding:'utf8',input:`
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {PermissionsBitField,PermissionFlagsBits,MessageFlags,ApplicationCommandOptionType} from 'discord.js';
@@ -26,7 +26,8 @@ import {cmds} from './src/commands.js';
 import {guild,makeRoom} from './src/db.js';
 const gidA='11111111111111111',gidB='22222222222222222',gidUnauthorized='33333333333333333';
 const images={blue:await fs.readFile('blue.png'),red:await fs.readFile('red.png'),green:await fs.readFile('green.png'),bad:Buffer.from('not a valid image')};
-const pc=await fs.readFile('pc.jpg');let pcId='p1c2g3',uploadRequests=0,uploadInteraction=null;
+const pc=await fs.readFile('pc.jpg');let pcId='p1c2g3',uploadRequests=0,uploadInteraction=null,uploadFailure=null;
+const uploadedURLs=[],signature='signature-fixture-must-not-leak';
 process.env.WALLHAVEN_ENABLED='true';process.env.AUTO_FETCH='true';delete process.env.POST_SEPARATOR_ENABLED;
 const metadata=id=>({id,url:'https://wallhaven.cc/w/'+id,category:'general',purity:'sfw',tags:[{name:'video games'}],
  dimension_x:1920,dimension_y:1080,path:'https://w.wallhaven.cc/full/'+id.slice(0,2)+'/wallhaven-'+id+'.jpg'});
@@ -35,7 +36,9 @@ globalThis.fetch=async(raw,options={})=>{
  if(url.hostname==='cdn.discordapp.com'){
   uploadRequests++;assert(uploadInteraction?.deferred,'the upload must be acknowledged before network or storage work');
   assert.equal(uploadInteraction.events[0],'deferReply');assert.equal(options.redirect,'error');
-  assert.equal(options.headers?.Authorization,undefined);
+  assert.equal(options.headers?.Authorization,undefined);uploadedURLs.push(url.toString());
+  if(uploadFailure==='download')throw Error('RAW_SEPARATOR_DOWNLOAD_ERROR '+url.toString());
+  if(uploadFailure==='http')return new Response('RAW_SEPARATOR_DOWNLOAD_ERROR '+url.toString(),{status:403});
   const name=url.pathname.split('/').at(-1).split('.')[0],bytes=images[name];assert(bytes);
   return new Response(bytes,{headers:{'content-type':'image/png','content-length':String(bytes.length)}});
  }
@@ -52,9 +55,11 @@ function destination(gid){
 }
 const a=destination(gidA),b=destination(gidB),unauthorized=destination(gidUnauthorized);
 function interaction(gid,{admin=true,name='blue',commandName='تعيين-الفاصل',kind='command',customId}={}){
- const attachment={id:'44444444444444444',url:'https://cdn.discordapp.com/attachments/55555555555555555/44444444444444444/'+name+'.png',
+ const prefix=gid===gidA?'ephemeral-attachments':'attachments';
+ const signed=gid===gidA?'?ex=70ff1234&is=70dd1234&hm='+signature:'';
+ const attachment={id:'44444444444444444',url:'https://cdn.discordapp.com/'+prefix+'/55555555555555555/44444444444444444/'+name+'.png'+signed,
   name:name+'.png',contentType:'image/png',size:images[name].length};
- const i={guildId:gid,channelId:'room',commandName,customId,deferred:false,replied:false,events:[],response:null,
+ const i={guildId:gid,channelId:'room',commandName,customId,attachment,deferred:false,replied:false,events:[],response:null,
   memberPermissions:new PermissionsBitField(admin?[PermissionFlagsBits.ManageGuild]:[]),
   options:{getChannel:()=>null,getString:()=> 'pc_wallpapers',getAttachment:(option,required)=>{assert.equal(option,'image');assert(required);return attachment;}},
   isAutocomplete:()=>false,isChatInputCommand:()=>kind==='command',isStringSelectMenu:()=>false,isChannelSelectMenu:()=>false,isButton:()=>kind==='button',isModalSubmit:()=>false,
@@ -67,7 +72,10 @@ async function configure(destination,name='blue',admin=true){
  const i=interaction(destination.gid,{name,admin});uploadInteraction=i;
  const before=destination.messages.length;await handleInteraction(i,destination.client);uploadInteraction=null;
  assert.equal(destination.messages.length,before,'configuration must never publish the uploaded divider');
- assert(i.response?.content);return i;
+ assert(i.response?.content);
+ for(const value of [signature,i.attachment.url,'RAW_SEPARATOR_'])assert(!i.response.content.includes(value),'a private response must not expose signed URLs or raw internal errors');
+ assert(!i.response.content.includes('https://'),'private configuration replies contain no attachment URL');
+ return i;
 }
 function assertDivider(payload,expected){
  assert.equal(payload.files.length,1);assert.equal(payload.files[0].name,'separator.png');
@@ -87,6 +95,8 @@ assert.deepEqual(await fs.readdir('storage/separators/'+gidUnauthorized).catch(e
 // An accepted image is stored exactly after the interaction is deferred.
 const configuredA=await configure(a,'blue');assert.deepEqual(configuredA.events,['deferReply','editReply']);
 assert.match(configuredA.response.content,/✅/);assert(!configuredA.response.files?.length);
+assert(configuredA.attachment.url.includes('/ephemeral-attachments/'));
+assert(uploadedURLs.includes(configuredA.attachment.url),'signed ephemeral slash-upload URL must reach the CDN unchanged');
 assert.deepEqual(await fs.readFile('storage/separators/'+gidA+'/separator.png'),images.blue);
 assert.deepEqual(a.g.packs,[],'uploading a separator is not adding a photograph library entry');
 
@@ -98,13 +108,32 @@ assert.equal(a.messages.length,2);assertDivider(a.messages[1],images.blue);asser
 
 // Different guilds keep different divider bytes even when both run one bot.
 const configuredB=await configure(b,'red');assert.match(configuredB.response.content,/✅/);
+assert(configuredB.attachment.url.includes('/attachments/'));assert(uploadedURLs.includes(configuredB.attachment.url),'regular attachment URLs must remain supported');
 pcId='p2c3g4';assert.match(await post(b.client,gidB,'room',{forced:true}),/نشرت|تم النشر/);
 assert.equal(b.messages.length,3);assertDivider(b.messages[2],images.red);
 assert.deepEqual(await fs.readFile('storage/separators/'+gidA+'/separator.png'),images.blue);
 
 // Invalid attachment bytes cannot overwrite a previously usable separator.
-const invalid=await configure(a,'bad');assert.match(invalid.response.content,/❌/);
+const invalid=await configure(a,'bad');assert.match(invalid.response.content,/❌/);assert.match(invalid.response.content,/غير صالحة/);
 assert.deepEqual(await fs.readFile('storage/separators/'+gidA+'/separator.png'),images.blue);
+// Download/HTTP errors and an atomic storage failure have distinct safe private
+// explanations; none may replace the previous successful signed upload.
+const safeFailures=[];
+for(const failure of ['download','http']){
+ uploadFailure=failure;const failed=await configure(a,'red');uploadFailure=null;
+ assert.match(failed.response.content,/❌/);assert.match(failed.response.content,/تعذر تنزيل/);safeFailures.push(failed.response.content);
+ assert.notEqual(failed.response.content,invalid.response.content);
+ assert.deepEqual(await fs.readFile('storage/separators/'+gidA+'/separator.png'),images.blue);
+}
+const originalRename=fs.rename;let failedStorage;
+try{
+ fs.rename=async()=>{throw Error('RAW_SEPARATOR_STORAGE_ERROR https://cdn.discordapp.com/ephemeral-attachments/file?hm='+signature);};
+ failedStorage=await configure(a,'red');
+}finally{fs.rename=originalRename;}
+assert.match(failedStorage.response.content,/❌/);assert.match(failedStorage.response.content,/تعذر حفظ/);
+assert.notEqual(failedStorage.response.content,invalid.response.content);assert.notEqual(failedStorage.response.content,safeFailures[0]);
+assert.deepEqual(await fs.readFile('storage/separators/'+gidA+'/separator.png'),images.blue);
+assert.deepEqual(await fs.readdir('storage/separators/'+gidA),['separator.png'],'failed atomic replacement cleans up its temporary file');
 pcId='p3c4g5';assert.match(await post(a.client,gidA,'room',{forced:true}),/نشرت|تم النشر/);
 assert.equal(a.messages.length,4);assertDivider(a.messages[3],images.blue);
 
@@ -129,7 +158,11 @@ assert.match(await post(a.client,gidA,'room',{forced:true}),/نشرت|تم ال�
 assert.equal(a.messages.length,beforeDisabled+3);assertDivider(a.messages.at(-1),images.green);
 assert.deepEqual(await fs.readFile('storage/separators/'+gidB+'/separator.png'),images.red);
 assert.deepEqual(a.g.packs,[]);assert.deepEqual(b.g.packs,[]);
-console.log('PASS: admin-only private divider upload, defer-before-download, exact storage/public delivery, guild isolation, invalid-upload preservation and disabled/private behavior');
+console.log('PASS: signed ephemeral/regular divider uploads, admin/defer isolation, exact public delivery, safe download/image/storage errors, old-file preservation and disabled/private behavior');
 `});
+ if(result.error)throw result.error;
+ assert.equal(result.status,0,result.stderr||result.stdout);
+ const output=result.stdout,allOutput=output+result.stderr;
+ for(const value of ['signature-fixture-must-not-leak','RAW_SEPARATOR_','https://cdn.discordapp.com/ephemeral-attachments/'])assert(!allOutput.includes(value),'diagnostic output must not reveal raw errors or signed attachment URLs');
  process.stdout.write(output);assert(output.includes('PASS:'));
 }finally{await fs.rm(temp,{recursive:true,force:true});}

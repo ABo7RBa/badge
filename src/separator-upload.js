@@ -7,32 +7,49 @@ const MAX_BYTES=8*1024*1024;
 const MAX_PIXELS=40_000_000;
 const pending=new Map();
 const extensions=['png','jpg','jpeg','webp'];
-const SAFE_ERROR='تعذر حفظ الفاصل. ارفع صورة PNG أو JPEG أو WebP ثابتة لا تتجاوز 8MB.';
+const messages=Object.freeze({
+ SEPARATOR_INVALID_ATTACHMENT:'تعذر قراءة المرفق. استخدم الأمر داخل السيرفر وأرفق الصورة من جهازك.',
+ SEPARATOR_INVALID_SIZE:'حجم صورة الفاصل يجب أن يكون أكبر من صفر ولا يتجاوز 8MB.',
+ SEPARATOR_UNSUPPORTED_URL:'رابط المرفق غير مدعوم. ارفع الصورة مباشرة في خيار image للأمر.',
+ SEPARATOR_DOWNLOAD_FAILED:'تعذر تنزيل صورة الفاصل من Discord. أعد رفع الصورة وحاول مرة أخرى.',
+ SEPARATOR_IMAGE_INVALID:'صورة الفاصل غير صالحة. استخدم PNG أو JPEG أو WebP ثابتة لا تتجاوز 40 مليون بكسل.',
+ SEPARATOR_STORAGE_FAILED:'تعذر حفظ صورة الفاصل على الاستضافة. تحقق من صلاحية الكتابة ومساحة القرص.'
+});
+class SeparatorUploadError extends Error{
+ constructor(code){super(messages[code]);this.code=code;}
+}
 
 function validAttachmentUrl(value){
  if(typeof value!=='string'||value.length>4096||/[\u0000-\u0020\u007f\\]/.test(value)||
-  !/^https:\/\/(?:cdn\.discordapp\.com|media\.discordapp\.net)\/attachments\/[0-9]{17,22}\/[0-9]{17,22}\/[^/?#]+(?:\?[^#]*)?$/.test(value))return false;
+  !/^https:\/\/(?:cdn\.discordapp\.com|media\.discordapp\.net)\/(?:attachments|ephemeral-attachments)\/[0-9]{17,22}\/[0-9]{17,22}\/[^/?#]+(?:\?[^#]*)?$/.test(value))return false;
  try{
   const url=new URL(value);
   if(url.username||url.password||url.port||url.hash||
-   !/^\/attachments\/[0-9]{17,22}\/[0-9]{17,22}\/[^/]+$/.test(url.pathname))return false;
+   !/^\/(?:attachments|ephemeral-attachments)\/[0-9]{17,22}\/[0-9]{17,22}\/[^/]+$/.test(url.pathname))return false;
   const filename=decodeURIComponent(url.pathname.split('/').at(-1));
   return filename!=='.'&&filename!=='..'&&!/[\u0000-\u001f\u007f/\\]/.test(filename);
  }catch{return false;}
 }
 
 async function save(guildId,url,imageFetch){
- const supplied=await imageFetch(url);
- if(!Buffer.isBuffer(supplied)&&!(supplied instanceof Uint8Array))throw Error('Invalid separator bytes');
- const bytes=Buffer.from(supplied);
- if(!bytes.length||bytes.length>MAX_BYTES)throw Error('Invalid separator size');
- const options={limitInputPixels:MAX_PIXELS,animated:false,failOn:'warning'};
- const info=await sharp(bytes,options).metadata();
- if(!['jpeg','png','webp'].includes(info.format)||info.pages!=null&&info.pages!==1||
-  !info.width||!info.height||info.width*info.height>MAX_PIXELS)throw Error('Invalid separator image');
- // Full decoding validates the upload; the saved data remains byte-for-byte
- // identical to the original attachment, without resizing or re-encoding.
- await sharp(bytes,options).stats();
+ let supplied;
+ try{supplied=await imageFetch(url);}
+ catch{throw new SeparatorUploadError('SEPARATOR_DOWNLOAD_FAILED');}
+ let bytes;
+ try{
+  if(!Buffer.isBuffer(supplied)&&!(supplied instanceof Uint8Array))throw Error('Invalid bytes');
+  bytes=Buffer.from(supplied);
+ }catch{throw new SeparatorUploadError('SEPARATOR_IMAGE_INVALID');}
+ if(!bytes.length||bytes.length>MAX_BYTES)throw new SeparatorUploadError('SEPARATOR_INVALID_SIZE');
+ let info;
+ try{
+  const options={limitInputPixels:MAX_PIXELS,animated:false,failOn:'warning'};
+  info=await sharp(bytes,options).metadata();
+  if(!['jpeg','png','webp'].includes(info.format)||info.pages!=null&&info.pages!==1||
+   !info.width||!info.height||info.width*info.height>MAX_PIXELS)throw Error('Invalid image');
+  // Full decoding validates the upload; saved data stays byte-for-byte identical.
+  await sharp(bytes,options).stats();
+ }catch{throw new SeparatorUploadError('SEPARATOR_IMAGE_INVALID');}
  const name=`separator.${info.format==='jpeg'?'jpg':info.format}`;
  const directory=new URL(`../storage/separators/${guildId}/`,import.meta.url);
  const target=new URL(name,directory);
@@ -46,21 +63,26 @@ async function save(guildId,url,imageFetch){
   for(const extension of extensions){
    if(`separator.${extension}`!==name)await fs.rm(new URL(`separator.${extension}`,directory),{force:true});
   }
- }finally{await fs.rm(temporary,{force:true}).catch(()=>{});}
+ }catch{throw new SeparatorUploadError('SEPARATOR_STORAGE_FAILED');}
+ finally{await fs.rm(temporary,{force:true}).catch(()=>{});}
  return {name,size:bytes.length};
 }
 
 export async function saveGuildSeparator(guildId,attachment,{imageFetch=readLimited}={}){
  try{
-  const url=attachment?.url;
   if(typeof guildId!=='string'||!/^\d{17,22}$/.test(guildId)||
-   !Number.isSafeInteger(attachment?.size)||attachment.size<1||attachment.size>MAX_BYTES||
-   !validAttachmentUrl(url))throw Error('Invalid separator upload');
+   !attachment||typeof attachment!=='object'||Array.isArray(attachment))throw new SeparatorUploadError('SEPARATOR_INVALID_ATTACHMENT');
+  const url=attachment.url,size=attachment.size;
+  if(!Number.isSafeInteger(size)||size<1||size>MAX_BYTES)throw new SeparatorUploadError('SEPARATOR_INVALID_SIZE');
+  if(!validAttachmentUrl(url))throw new SeparatorUploadError('SEPARATOR_UNSUPPORTED_URL');
   // Keep commit and old-format cleanup in upload order for each server.
   const previous=pending.get(guildId)||Promise.resolve();
   const operation=previous.catch(()=>{}).then(()=>save(guildId,url,imageFetch));
   pending.set(guildId,operation);
   try{return await operation;}
   finally{if(pending.get(guildId)===operation)pending.delete(guildId);}
- }catch{throw Error(SAFE_ERROR);}
+ }catch(error){
+  if(error instanceof SeparatorUploadError)throw error;
+  throw new SeparatorUploadError('SEPARATOR_INVALID_ATTACHMENT');
+ }
 }

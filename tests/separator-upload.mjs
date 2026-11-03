@@ -12,7 +12,14 @@ const first='123456789012345678',second='223456789012345678',absent='92345678901
 const source='https://cdn.discordapp.com/attachments/323456789012345678/423456789012345678/divider.png?ex=123&is=456&hm=signed-test-value';
 const attachment=(bytes,url=source)=>({url,size:bytes.length,name:'untrusted-name.gif',contentType:'application/octet-stream'});
 const stored=(gid,name)=>path.join(tmp,'storage','separators',gid,name);
-const safeError='تعذر حفظ الفاصل. ارفع صورة PNG أو JPEG أو WebP ثابتة لا تتجاوز 8MB.';
+const safeErrors={
+ SEPARATOR_INVALID_ATTACHMENT:'تعذر قراءة المرفق. استخدم الأمر داخل السيرفر وأرفق الصورة من جهازك.',
+ SEPARATOR_INVALID_SIZE:'حجم صورة الفاصل يجب أن يكون أكبر من صفر ولا يتجاوز 8MB.',
+ SEPARATOR_UNSUPPORTED_URL:'رابط المرفق غير مدعوم. ارفع الصورة مباشرة في خيار image للأمر.',
+ SEPARATOR_DOWNLOAD_FAILED:'تعذر تنزيل صورة الفاصل من Discord. أعد رفع الصورة وحاول مرة أخرى.',
+ SEPARATOR_IMAGE_INVALID:'صورة الفاصل غير صالحة. استخدم PNG أو JPEG أو WebP ثابتة لا تتجاوز 40 مليون بكسل.',
+ SEPARATOR_STORAGE_FAILED:'تعذر حفظ صورة الفاصل على الاستضافة. تحقق من صلاحية الكتابة ومساحة القرص.'
+};
 const oldFetch=globalThis.fetch,oldWarn=console.warn,oldFlag=process.env.POST_SEPARATOR_ENABLED;
 const warnings=[],client=new Client({intents:[]});
 try{
@@ -28,16 +35,25 @@ try{
  const texture=Buffer.from(Array.from({length:96*12*3},(_,index)=>index*37%256));
  const jpeg=await sharp(texture,{raw:{width:96,height:12,channels:3}}).jpeg().toBuffer();
  const webp=await canvas('#3b8718').webp().toBuffer();
- const reject=operation=>assert.rejects(operation,error=>error.message===safeError&&!error.cause);
+ const reject=(operation,code)=>assert.rejects(operation,error=>{
+  assert.equal(error.code,code);assert.equal(error.message,safeErrors[code]);
+  assert.equal(error.cause,undefined);assert.deepEqual(Object.keys(error),['code']);
+  assert(!error.stack.includes('signed-test-value'));assert(!error.stack.includes('private failure detail'));
+  assert(!JSON.stringify(error).includes('https://'));
+  return true;
+ });
  let reads=0;
  const fetchPng=async url=>{reads++;assert.equal(url,source);return png;};
 
  // Untrusted routing, declared sizes and URLs must fail before downloading.
  for(const gid of ['../outside','123','1'.repeat(23),123456789012345678,null]){
-  await reject(saveGuildSeparator(gid,attachment(png),{imageFetch:fetchPng}));
+  await reject(saveGuildSeparator(gid,attachment(png),{imageFetch:fetchPng}),'SEPARATOR_INVALID_ATTACHMENT');
+ }
+ for(const value of [null,undefined,'not an attachment',[]]){
+  await reject(saveGuildSeparator(first,value,{imageFetch:fetchPng}),'SEPARATOR_INVALID_ATTACHMENT');
  }
  for(const size of [undefined,null,0,-1,1.5,8*1024*1024+1,'12']){
-  await reject(saveGuildSeparator(first,{...attachment(png),size},{imageFetch:fetchPng}));
+  await reject(saveGuildSeparator(first,{...attachment(png),size},{imageFetch:fetchPng}),'SEPARATOR_INVALID_SIZE');
  }
  for(const url of [
   'http://cdn.discordapp.com/attachments/323456789012345678/423456789012345678/divider.png',
@@ -45,12 +61,18 @@ try{
   source.replace('cdn.discordapp.com','user:password@cdn.discordapp.com'),
   source.replace('cdn.discordapp.com','cdn.discordapp.com:443'),
   source.replace('/attachments/','/other/'),
+  source.replace('/attachments/','/ephemeral-attachments-evil/'),
+  source.replace('/attachments/','/attachments/ephemeral-attachments/'),
   source.replace('divider.png','../divider.png'),
   source.replace('divider.png','%2e%2e'),
   source.replace('divider.png','bad%2ffile.png'),
   source.replace('divider.png','bad\\file.png'),
   source+'#fragment','file:///tmp/separator.png'
- ])await reject(saveGuildSeparator(first,attachment(png,url),{imageFetch:fetchPng}));
+ ]){
+  await reject(saveGuildSeparator(first,attachment(png,url),{imageFetch:fetchPng}),'SEPARATOR_UNSUPPORTED_URL');
+  await reject(saveGuildSeparator(first,attachment(png,url.replace('/attachments/','/ephemeral-attachments/')),
+   {imageFetch:fetchPng}),'SEPARATOR_UNSUPPORTED_URL');
+ }
  assert.equal(reads,0);
 
  const saved=await saveGuildSeparator(first,attachment(png),{imageFetch:fetchPng});
@@ -61,6 +83,19 @@ try{
  const validated=saveGuildSeparator(first,mutable,{imageFetch:fetchPng});
  mutable.url='https://example.com/unvalidated-image.png';
  await validated; // Queued work must retain the URL that was actually validated.
+ for(const host of ['cdn.discordapp.com','media.discordapp.net']){
+  for(const prefix of ['attachments','ephemeral-attachments']){
+   const url=source.replace('cdn.discordapp.com',host).replace('/attachments/',`/${prefix}/`);
+   assert.deepEqual(await saveGuildSeparator(first,attachment(png,url),{imageFetch:async received=>{
+    assert.equal(received,url,'signed regular and slash-command attachment URLs are preserved');return png;
+   }}),{name:'separator.png',size:png.length});
+  }
+ }
+ const tiny=await sharp({create:{width:1,height:1,channels:3,background:'#183b87'}}).png().toBuffer();
+ const tinyUrl=source.replace('/attachments/','/ephemeral-attachments/');
+ assert.deepEqual(await saveGuildSeparator(first,attachment(tiny,tinyUrl),{imageFetch:async()=>tiny}),
+  {name:'separator.png',size:tiny.length},'tiny valid dividers have no minimum dimensions');
+ assert.deepEqual(await fs.readFile(stored(first,'separator.png')),tiny);
  const proxy=source.replace('cdn.discordapp.com','media.discordapp.net');
  assert.deepEqual(await saveGuildSeparator(second,attachment(webp,proxy),{imageFetch:async url=>{
   assert.equal(url,proxy);return new Uint8Array(webp);
@@ -68,17 +103,22 @@ try{
 
  // Default transport preserves signed URLs, bounds reads, rejects redirects,
  // and never includes authorization in an image request.
+ const ephemeral=source.replace('/attachments/','/ephemeral-attachments/');
  globalThis.fetch=async(url,options)=>{
-  assert.equal(url,source);assert.equal(options.redirect,'error');
+  assert.equal(url,ephemeral);assert.equal(options.redirect,'error');
   assert.equal(new Headers(options.headers).get('authorization'),null);
   return new Response(jpeg,{headers:{'content-type':'image/jpeg','content-length':String(jpeg.length)}});
  };
- assert.deepEqual(await saveGuildSeparator(first,attachment(jpeg)),{name:'separator.jpg',size:jpeg.length});
+ assert.deepEqual(await saveGuildSeparator(first,attachment(jpeg,ephemeral)),{name:'separator.jpg',size:jpeg.length});
  assert.deepEqual(await fs.readdir(path.dirname(stored(first,'separator.jpg'))),['separator.jpg']);
+ await reject(saveGuildSeparator('../outside',attachment(png),{imageFetch:fetchPng}),'SEPARATOR_INVALID_ATTACHMENT');
+ await reject(saveGuildSeparator(first,{...attachment(png),size:0},{imageFetch:fetchPng}),'SEPARATOR_INVALID_SIZE');
+ await reject(saveGuildSeparator(first,attachment(png,'https://example.com/image.png'),{imageFetch:fetchPng}),'SEPARATOR_UNSUPPORTED_URL');
+ assert.deepEqual(await fs.readFile(stored(first,'separator.jpg')),jpeg,'invalid upload metadata leaves the saved image intact');
  globalThis.fetch=async()=>new Response(null,{status:302,headers:{location:'https://example.com/image.png'}});
- await reject(saveGuildSeparator(first,attachment(png)));
+ await reject(saveGuildSeparator(first,attachment(png)),'SEPARATOR_DOWNLOAD_FAILED');
  globalThis.fetch=async()=>new Response(Buffer.alloc(8*1024*1024+1),{headers:{'content-type':'image/png'}});
- await reject(saveGuildSeparator(first,attachment(png)));
+ await reject(saveGuildSeparator(first,attachment(png)),'SEPARATOR_DOWNLOAD_FAILED');
  assert.deepEqual(await fs.readFile(stored(first,'separator.jpg')),jpeg);
 
  const frames=Buffer.alloc(8*16*3,20);frames.fill(220,8*8*3);
@@ -90,16 +130,22 @@ try{
  const tiff=await canvas('#123456').tiff().toBuffer();
  const tooManyPixels=await sharp({create:{width:8001,height:5000,channels:3,background:'#123456'}}).jpeg({quality:10}).toBuffer();
  for(const bytes of [Buffer.alloc(0),Buffer.alloc(8*1024*1024+1),Buffer.from('corrupt image'),truncated,tiff,animated,tooManyPixels]){
-  await reject(saveGuildSeparator(first,attachment(png),{imageFetch:async()=>bytes}));
+  const code=!bytes.length||bytes.length>8*1024*1024?'SEPARATOR_INVALID_SIZE':'SEPARATOR_IMAGE_INVALID';
+  await reject(saveGuildSeparator(first,attachment(png),{imageFetch:async()=>bytes}),code);
   assert.deepEqual(await fs.readFile(stored(first,'separator.jpg')),jpeg,'failed image validation preserves the previous divider');
  }
- await reject(saveGuildSeparator(first,attachment(png),{imageFetch:async()=>{throw Error(source);}}));
+ for(const value of [null,'not image bytes',{}]){
+  await reject(saveGuildSeparator(first,attachment(png),{imageFetch:async()=>value}),'SEPARATOR_IMAGE_INVALID');
+ }
+ await reject(saveGuildSeparator(first,attachment(png),{imageFetch:async()=>{
+  throw Object.assign(Error('private failure detail '+source),{code:'SEPARATOR_IMAGE_INVALID'});
+ }}),'SEPARATOR_DOWNLOAD_FAILED');
  assert.deepEqual(await fs.readFile(stored(first,'separator.jpg')),jpeg);
 
  // A failed atomic rename leaves the previous file usable and removes its temp.
  const originalRename=fs.rename;
- fs.rename=async()=>{throw Error('private filesystem error detail');};
- try{await reject(saveGuildSeparator(first,attachment(png),{imageFetch:async()=>png}));}
+ fs.rename=async()=>{throw Error('private failure detail '+source);};
+ try{await reject(saveGuildSeparator(first,attachment(png),{imageFetch:async()=>png}),'SEPARATOR_STORAGE_FAILED');}
  finally{fs.rename=originalRename;}
  assert.deepEqual(await fs.readdir(path.dirname(stored(first,'separator.jpg'))),['separator.jpg']);
  assert.deepEqual(await fs.readFile(stored(first,'separator.jpg')),jpeg);
@@ -116,6 +162,10 @@ try{
  assert.deepEqual(await fs.readdir(path.dirname(stored(first,'separator.webp'))),['separator.webp']);
  assert.deepEqual(await fs.readFile(stored(first,'separator.webp')),webp);
  assert.deepEqual(await fs.readFile(stored(second,'separator.webp')),webp,'another server is never modified');
+ const failed=saveGuildSeparator(first,attachment(png),{imageFetch:async()=>{throw Error(source);}});
+ const retried=saveGuildSeparator(first,attachment(webp),{imageFetch:async()=>webp});
+ await Promise.all([reject(failed,'SEPARATOR_DOWNLOAD_FAILED'),retried]);
+ assert.deepEqual(await fs.readFile(stored(first,'separator.webp')),webp,'a failed queued upload does not block a later valid upload');
 
  await fs.mkdir(path.join(tmp,'media'));
  await fs.writeFile(path.join(tmp,'media','separator.png'),png);
@@ -147,7 +197,7 @@ try{
  assert.equal(delivered.at(-1).name,'separator.webp');assert.deepEqual(delivered.at(-1).data,webp);
  assert.deepEqual(await fs.readFile(stored(first,'separator.webp')),webp);
  assert.deepEqual(warnings,[]);
- console.log('PASS: safe original separator uploads, atomic replacement, per-server delivery, restart, validation and failure preservation');
+ console.log('PASS: signed regular/ephemeral separator uploads, private stage errors, exact bytes, atomic replacement and per-server recovery');
 }finally{
  globalThis.fetch=oldFetch;console.warn=oldWarn;
  if(oldFlag===undefined)delete process.env.POST_SEPARATOR_ENABLED;else process.env.POST_SEPARATOR_ENABLED=oldFlag;

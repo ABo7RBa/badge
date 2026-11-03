@@ -1,6 +1,6 @@
 {
   "name": "abo-7rb-complete-five-feeds",
-  "version": "16.17.0",
+  "version": "16.18.0",
   "private": true,
   "type": "module",
   "description": "Arabic Discord bot: matching profile cards from Unsplash, Wallhaven anime/PC and Fanart.tv film artwork",
