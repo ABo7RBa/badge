@@ -101,38 +101,80 @@ const slashPreview=interaction('command',{commandName:'معاينة',state:{embe
 await handleInteraction(slashPreview,bot);assert.deepEqual(slashPreview.state.embeds,[]);assert.equal(slashPreview.state.attachments.length,1);
 assert.equal(slashPreview.state.content,'');assert.equal(slashPreview.files[0].data.length>1000,true);
 
-// A download must show exactly one full card, not a three-image Discord gallery.
-const download=interaction('button',{customId:'sas:download:'+local.id,memberPermissions:new PermissionsBitField()});
-await handleInteraction(download,bot);
-assert.equal(download.events[0],'deferReply');assert.equal(download.events.at(-1),'editReply');
-assert.deepEqual(download.files.map(file=>file.name),['profile-card.png']);
-assert.equal(download.state.attachments.length,1);
-assert.equal(download.state.content,'');assert.deepEqual(download.state.embeds,[]);assert.deepEqual(download.state.components,[]);
-const cardInfo=await (await import('sharp')).default(download.files[0].data).metadata();
-assert.equal(cardInfo.format,'png');assert.equal(cardInfo.width,1080);assert.equal(cardInfo.height,700);
-assert(download.files.every(file=>file.data.length>1000));
-// Unsplash downloads now return exactly one composite card, just like anime.
-process.env.UNSPLASH_ACCESS_KEY='test-download-key';let tracks=0;
-globalThis.fetch=async raw=>{
- const u=new URL(raw);
- if(u.hostname==='images.unsplash.com')return new Response(u.pathname.endsWith('02')?bn:av,{headers:{'content-type':'image/png'}});
- assert.equal(u.hostname,'api.unsplash.com');assert(u.pathname.endsWith('/download'));tracks++;
- return Response.json({url:'https://images.unsplash.com/photo-original'});
+// Downloads place the complete avatar above its complete banner, never the framed card or
+// the normalized512x512/1200x480 display derivatives saved for an anime preview.
+process.env.UNSPLASH_ACCESS_KEY='test-download-key';let tracks=0,failOriginalBanner=false;
+const originalRequests=[];
+globalThis.fetch=async(raw,options)=>{
+ const u=new URL(raw);originalRequests.push(u);
+ if(u.hostname==='images.unsplash.com'){
+  assert([remote.avatarURL,remote.bannerURL].includes(raw),'retrieve the exact saved source URL without rewriting or metadata re-search');
+  assert.equal(options?.headers?.Authorization,undefined);assert.equal(options?.headers?.['X-API-Key'],undefined);assert.equal(options?.redirect,'error');
+  assert.equal(u.searchParams.get('ixid'),u.pathname.endsWith('02')?'original-b':'original-a');
+  if(failOriginalBanner&&u.pathname.endsWith('02'))return new Response('unavailable',{status:503});
+  return new Response(u.pathname.endsWith('02')?bn:av,{headers:{'content-type':'image/png'}});
+ }
+ if(u.hostname==='api.unsplash.com'){
+  assert.equal(options?.headers?.Authorization,'Client-ID test-download-key');assert(u.pathname.endsWith('/download'),'existing saved regular URLs need no additional photo API request');
+  tracks++;return Response.json({url:'https://images.unsplash.com/photo-original'});
+ }
+ if(u.hostname==='wallhaven.cc'){
+  assert(['/api/v1/w/a1b2c3','/api/v1/w/d4e5f6'].includes(u.pathname),'anime download looks up exactly its saved source IDs');
+  const id=u.pathname.split('/').at(-1),portrait=id==='a1b2c3';
+  return Response.json({data:{id,url:'https://wallhaven.cc/w/'+id,category:'anime',purity:'sfw',tags:[{name:'anime'}],
+   dimension_x:portrait?800:1600,dimension_y:portrait?1000:900,
+   path:'https://w.wallhaven.cc/full/'+id.slice(0,2)+'/wallhaven-'+id+'.jpg'}});
+ }
+ if(u.hostname==='w.wallhaven.cc'){
+  assert.equal(options?.headers?.Authorization,undefined);assert.equal(options?.headers?.['X-API-Key'],undefined);assert.equal(options?.redirect,'error');
+  assert(['/full/a1/wallhaven-a1b2c3.jpg','/full/d4/wallhaven-d4e5f6.jpg'].includes(u.pathname));
+  return new Response(u.pathname.includes('a1b2c3')?av:bn,{headers:{'content-type':'image/png'}});
+ }
+ throw Error('Unexpected download destination');
 };
-const remoteDownload=interaction('button',{customId:'sas:download:'+remote.id});
-await handleInteraction(remoteDownload,bot);
-assert.equal(tracks,2);assert.equal(remoteDownload.events[0],'deferReply');
-assert.equal(remoteDownload.state.content,'');assert.deepEqual(remoteDownload.state.embeds,[]);
-assert.deepEqual(remoteDownload.state.components,[]);assert.equal(remoteDownload.files.length,1);
-const remoteInfo=await (await import('sharp')).default(remoteDownload.files[0].data).metadata();
-assert.equal(remoteInfo.format,'png');assert.equal(remoteInfo.width,1080);assert.equal(remoteInfo.height,700);
-assert.equal(remoteDownload.files[0].name,'profile-card.png');
-process.env.PHOTO_DISPLAY='source';
-const sourceDownload=interaction('button',{customId:'sas:download:'+remote.id});
-await handleInteraction(sourceDownload,bot);assert.equal(tracks,4);
-assert.equal(sourceDownload.files.length,0);assert.equal(sourceDownload.state.embeds[0].image.url,remote.bannerURL);
-assert.equal(sourceDownload.state.embeds[0].thumbnail.url,remote.avatarURL);
-process.env.PHOTO_DISPLAY='card';
+async function assertOriginalFiles(response){
+ assert.equal(response.events[0],'deferReply');assert.equal(response.events.at(-1),'editReply');
+ assert.deepEqual(response.files.map(file=>file.name),['avatar-original.png','banner-original.png']);
+ assert.equal(response.state.attachments.length,2);assert.equal(response.state.content,'');
+ assert.equal(response.state.embeds.length,2,'private reply shows avatar above banner');
+ assert.deepEqual(response.state.embeds,[{image:{url:'attachment://avatar-original.png'}},{image:{url:'attachment://banner-original.png'}}],'two image-only embeds preserve vertical order without captions');
+ assert.deepEqual(response.state.components,[]);
+ assert(response.files[0].data.equals(av),'avatar must retain the exact complete source bytes');
+ assert(response.files[1].data.equals(bn),'banner must retain the exact complete source bytes');
+ for(const [file,width,height] of [[response.files[0],800,1000],[response.files[1],1600,900]]){
+  const metadata=await (await import('sharp')).default(file.data).metadata();
+  assert.equal(metadata.format,'png');assert.equal(metadata.width,width);assert.equal(metadata.height,height);
+  assert.notEqual(metadata.width,1080,'not a1080x700profile card');
+ }
+}
+const download=interaction('button',{customId:'sas:download:'+local.id,memberPermissions:new PermissionsBitField()});
+await handleInteraction(download,bot);await assertOriginalFiles(download);
+assert.equal(originalRequests.filter(url=>url.hostname==='wallhaven.cc').length,2);
+assert.equal(originalRequests.filter(url=>url.hostname==='w.wallhaven.cc').length,2);
+// Old display derivatives may have been removed; source metadata still identifies
+// exactly the previously published pair, so downloads do not require a library.
+await fs.rm(local.avatar,{force:true});await fs.rm(local.banner,{force:true});
+const oldAnimeDownload=interaction('button',{customId:'sas:download:'+local.id,memberPermissions:new PermissionsBitField()});
+await handleInteraction(oldAnimeDownload,bot);await assertOriginalFiles(oldAnimeDownload);
+// A pre-existing remote record has only urls.regular saved. Both public display
+// modes must return the same uncropped files privately, with2tracking events.
+for(const mode of ['card','source']){
+ process.env.PHOTO_DISPLAY=mode;const before=tracks;
+ const remoteDownload=interaction('button',{customId:'sas:download:'+remote.id});
+ await handleInteraction(remoteDownload,bot);await assertOriginalFiles(remoteDownload);
+ assert.equal(tracks,before+2);
+}
+assert.equal(originalRequests.filter(url=>url.hostname==='images.unsplash.com').length,4);
+// Failure of either original must not send one partial image or the public card.
+const recordsBefore=JSON.stringify(guild('interactions').packs),tracksBeforeFailure=tracks;failOriginalBanner=true;
+const failedDownload=interaction('button',{customId:'sas:download:'+remote.id});
+await handleInteraction(failedDownload,bot);
+assert.equal(failedDownload.events[0],'deferReply');assert.equal(failedDownload.events.at(-1),'editReply');
+assert.equal((failedDownload.files||[]).length,0);assert.deepEqual(failedDownload.state.attachments,[]);
+assert.deepEqual(failedDownload.state.embeds,[]);assert.match(failedDownload.state.content,/❌/);
+assert.equal(tracks,tracksBeforeFailure,'failed originals are not tracked as a completed download');
+assert.equal(JSON.stringify(guild('interactions').packs),recordsBefore,'download failure cannot mutate the source catalogue');
+failOriginalBanner=false;process.env.PHOTO_DISPLAY='card';
 // Confirm deletion is acknowledged before any potentially slow REST request.
 const deletion=interaction('button',{customId:'sas:confirm:original-message'});
 const deletionClient={user:{id:'test-bot'},channels:{fetch:async()=>{

@@ -54,6 +54,8 @@ globalThis.fetch=async raw=>{
  if(url.hostname==='assets.fanart.tv')return new Response(url.pathname.includes('52df821bd2a9f')?av:bn,{headers:{'content-type':'image/png'}});
  if(url.hostname==='wallhaven.cc'){
   if(url.pathname==='/api/v1/w/p1c2g3')return Response.json({data:wallhaven('p1c2g3',false,'general')});
+  if(url.pathname==='/api/v1/w/a1b2c3')return Response.json({data:wallhaven('a1b2c3',true)});
+  if(url.pathname==='/api/v1/w/d4e5f6')return Response.json({data:wallhaven('d4e5f6')});
   if(url.searchParams.get('atleast')==='1920x1080')return Response.json({data:url.searchParams.get('q')==='anime'?[]:[wallhaven('p1c2g3',false,'general')]});
   const avatar=url.searchParams.get('atleast')==='600x600';
   return Response.json({data:[wallhaven(avatar?'a1b2c3':'d4e5f6',avatar)]});
@@ -155,7 +157,7 @@ for(const item of published){
  const download=interaction('button',item.gid,{customId:button.custom_id});
  await handleInteraction(download,item.client);
  assert(download.response);assert.equal(item.messages.length,before);assert.equal(item.attempts.length,2);
- if(item!==source)assert.equal(download.response.files.length,1);
+ assert.equal(download.response.files.length,item.room.category==='pc_wallpapers'?1:2);
  const preview=destination('private-preview-'+item.gid,item.room.category);
  const command=interaction('command',preview.gid,{commandName:'معاينة',options:{getChannel:()=>null,getString:()=>item.room.category}});
  await handleInteraction(command,preview.client);

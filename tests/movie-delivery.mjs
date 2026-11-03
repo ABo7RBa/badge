@@ -92,18 +92,26 @@ assert.equal(manual.g.packs[0].visualHash,await visualHash(poster));
 assert.equal(manual.g.packs[0].bannerVisualHash,await visualHash(background));
 assert(downloadedPaths.filter(path=>path===flatPoster).length>=2);
 assert(downloadedPaths.filter(path=>path===flatBackground).length>=2);
-// The flat-CDN fixture must also produce the same complete downloadable card.
+// Download the exact avatar and banner originals from the same flat-CDN film,
+// with an image-only embed for each file so Discord stacks them vertically.
 let downloadPayload;
 const download={guildId:manual.gid,customId:'sas:download:'+prepared.id,deferred:false,
  isAutocomplete:()=>false,isChatInputCommand:()=>false,isStringSelectMenu:()=>false,isChannelSelectMenu:()=>false,isButton:()=>true,isModalSubmit:()=>false,
  async deferReply(payload){assert.equal(payload.flags,MessageFlags.Ephemeral);this.deferred=true;},
  async editReply(payload){downloadPayload=payload;},async reply(payload){downloadPayload=payload;}};
+const beforeDownload=JSON.stringify(store);
 await handleInteraction(download,manual.client);
-assert(download.deferred);assert.equal(downloadPayload.content,'');assert.equal(downloadPayload.files.length,1);
-assert.equal(downloadPayload.files[0].name,'profile-card.png');
-assert.deepEqual(downloadPayload.files[0].attachment,manual.messages[0].files[0].attachment,'download returns the complete posted profile card');
-const cardInfo=await (await import('sharp')).default(downloadPayload.files[0].attachment).metadata();
-assert.equal(cardInfo.format,'png');assert.equal(cardInfo.width,1080);assert.equal(cardInfo.height,700);
+assert(download.deferred);assert.equal(downloadPayload.content,'');assert.equal(downloadPayload.files.length,2);
+assert.deepEqual(downloadPayload.files.map(file=>file.name),['avatar-original.png','banner-original.png']);
+assert.deepEqual(downloadPayload.files[0].attachment,poster);assert.deepEqual(downloadPayload.files[1].attachment,background);
+assert.equal(downloadPayload.embeds.length,2);
+for(const [index,embed] of downloadPayload.embeds.entries()){
+ const data=embed.toJSON();assert.equal(data.image.url,'attachment://'+downloadPayload.files[index].name);
+ for(const field of ['title','description','footer','thumbnail','url'])assert.equal(data[field],undefined);
+}
+const [avatarInfo,bannerInfo]=await Promise.all(downloadPayload.files.map(file=>(async()=> (await import('sharp')).default(file.attachment).metadata())()));
+assert.equal(avatarInfo.width,800);assert.equal(avatarInfo.height,1000);assert.equal(bannerInfo.width,1600);assert.equal(bannerInfo.height,900);
+assert.equal(JSON.stringify(store),beforeDownload,'private downloads do not change publication or duplicate history');
 const noRepeat=await post(manual.client,manual.gid,'room',{forced:true});
 assert.equal(manual.messages.length,1,'published movie images must never be recycled');
 assert(!noRepeat.includes('تم النشر'));

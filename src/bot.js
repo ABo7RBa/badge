@@ -15,6 +15,7 @@ import {APP_VERSION,sanitizeMovieReport,formatMovieReport,explainMovieReport,san
 import {imageActionButton,setupImageButtonEmojis} from './button-icons.js';
 import {sendPostSeparator} from './post-separator.js';
 import {saveGuildSeparator} from './separator-upload.js';
+import {downloadOriginalPair} from './original-downloads.js';
 // Optional attribution display; image-only messages are the requested default.
 const showImageCredits=()=>process.env.SHOW_IMAGE_CREDITS==='true';
 const photoCards=()=>process.env.PHOTO_DISPLAY!=='source';
@@ -484,21 +485,18 @@ async function buttons(i,client){
   if(!item)throw Error('لم تعد هذه الخلفية متاحة للتنزيل من الموقع');
   return i.editReply(ui('',{files:[new AttachmentBuilder(item.buffer,{name:item.filename})],components:[]}));
  }
+ if(action==='download'){
+  const original=guild(i.guildId).packs.find(record=>record.id===id);
+  if(!original)return i.reply(ep('بيانات هذه الصورة لم تعد متاحة.'));
+  await i.deferReply(ep(''));
+  const images=await downloadOriginalPair(original);
+  if(original.remote)await trackUnsplashPair(original);
+  return i.editReply(ui('',{
+   files:images.map(image=>new AttachmentBuilder(image.buffer,{name:image.filename})),
+   embeds:images.map(image=>new EmbedBuilder().setImage(`attachment://${image.filename}`)),components:[]}));
+ }
  const p=pack(i.guildId,id);
  if(!p)return i.reply(ep('ملفات هذه الصورة لم تعد متاحة.'));
- if(action==='download'){
-  if(p.remote&&!photoCards()){
-   await i.deferReply(ep(''));
-   await trackUnsplashPair(p);
-   return i.editReply(ui('',{embeds:unsplashEmbeds(p),components:[]}));
-  }
-  await i.deferReply(ep(''));
-  const {mediaPath}=await import('./db.js');
-  const image=p.kind==='profile'?new AttachmentBuilder((await renderCard(p)).buffer,{name:'profile-card.png'}):
-   new AttachmentBuilder(mediaPath(p.avatar),{name:'pc-wallpaper.jpg'});
-  if(p.remote)await trackUnsplashPair(p);
-  return i.editReply(ui('',{files:[image],components:[]}));
- }
 
  if(action==='edit'){
   if(!admin(i))return i.reply(ep('⛔ التعديل للمشرفين فقط'));
